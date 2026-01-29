@@ -11,7 +11,7 @@ from app.database import init_db, close_db
 from app.services.acp_client import close_acp_client
 
 # Import routers
-from app.routers import auth, users, projects, sessions, chat, health, documents
+from app.routers import auth, users, projects, sessions, chat, health, documents, marketplace
 
 
 @asynccontextmanager
@@ -62,6 +62,7 @@ app.include_router(projects.router, prefix="/api/v1/projects", tags=["Projects"]
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
+app.include_router(marketplace.router, prefix="/api/v1/marketplace", tags=["Marketplace"])
 
 
 @app.get("/")

@@ -7,6 +7,7 @@ from app.services.session_service import SessionService
 from app.services.chat_service import ChatService
 from app.services.acp_client import ACPClient, get_acp_client, close_acp_client
 from app.services.document_service import DocumentService, DocumentServiceError
+from app.services.marketplace_service import MarketplaceService, MarketplaceServiceError
 
 __all__ = [
     "AuthService",
@@ -19,4 +20,6 @@ __all__ = [
     "close_acp_client",
     "DocumentService",
     "DocumentServiceError",
+    "MarketplaceService",
+    "MarketplaceServiceError",
 ]

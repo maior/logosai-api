@@ -75,6 +75,21 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
     )
+    marketplace_agents: Mapped[list["MarketplaceAgent"]] = relationship(
+        "MarketplaceAgent",
+        back_populates="creator",
+        cascade="all, delete-orphan",
+    )
+    agent_reviews: Mapped[list["AgentReview"]] = relationship(
+        "AgentReview",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    agent_purchases: Mapped[list["AgentPurchase"]] = relationship(
+        "AgentPurchase",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<User(id={self.id}, email={self.email})>"
@@ -84,3 +99,4 @@ class User(Base):
 from app.models.project import Project
 from app.models.session import Session
 from app.models.document import Document
+from app.models.marketplace import MarketplaceAgent, AgentReview, AgentPurchase

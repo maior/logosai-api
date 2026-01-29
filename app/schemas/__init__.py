@@ -50,6 +50,26 @@ from app.schemas.document import (
     DocumentChunk,
     DocumentProcessingStatus,
 )
+from app.schemas.marketplace import (
+    AgentBase,
+    AgentCreate,
+    AgentUpdate,
+    AgentResponse,
+    AgentListResponse,
+    AgentDetailResponse,
+    AgentSearchRequest,
+    AgentStatsResponse,
+    ReviewBase,
+    ReviewCreate,
+    ReviewUpdate,
+    ReviewResponse,
+    ReviewListResponse,
+    PurchaseCreate,
+    PurchaseResponse,
+    PurchaseListResponse,
+    CategoryResponse,
+    CategoryListResponse,
+)
 
 __all__ = [
     # Auth schemas
@@ -97,4 +117,23 @@ __all__ = [
     "DocumentSearchResponse",
     "DocumentChunk",
     "DocumentProcessingStatus",
+    # Marketplace schemas
+    "AgentBase",
+    "AgentCreate",
+    "AgentUpdate",
+    "AgentResponse",
+    "AgentListResponse",
+    "AgentDetailResponse",
+    "AgentSearchRequest",
+    "AgentStatsResponse",
+    "ReviewBase",
+    "ReviewCreate",
+    "ReviewUpdate",
+    "ReviewResponse",
+    "ReviewListResponse",
+    "PurchaseCreate",
+    "PurchaseResponse",
+    "PurchaseListResponse",
+    "CategoryResponse",
+    "CategoryListResponse",
 ]
