@@ -1,0 +1,84 @@
+"""FastAPI application entry point."""
+
+from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.config import settings
+from app.database import init_db, close_db
+
+# Import routers
+from app.routers import auth, users, projects, sessions, chat, health
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Application lifespan handler."""
+    # Startup
+    print(f"🚀 Starting {settings.app_name} v{settings.app_version}")
+    print(f"📊 Environment: {settings.environment}")
+    print(f"🔗 Database: {settings.database_url.split('@')[-1] if '@' in settings.database_url else 'configured'}")
+
+    # Initialize database
+    # await init_db()  # Uncomment when models are ready
+
+    yield
+
+    # Shutdown
+    print("👋 Shutting down...")
+    await close_db()
+
+
+# Create FastAPI app
+app = FastAPI(
+    title=settings.app_name,
+    description="LogosAI Backend API Server - FastAPI Version",
+    version=settings.app_version,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    lifespan=lifespan,
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Include routers
+app.include_router(health.router, tags=["Health"])
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["Authentication"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
+app.include_router(projects.router, prefix="/api/v1/projects", tags=["Projects"])
+app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
+app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
+
+
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {
+        "name": settings.app_name,
+        "version": settings.app_version,
+        "status": "running",
+        "docs": "/docs",
+    }
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(
+        "app.main:app",
+        host=settings.host,
+        port=settings.port,
+        reload=settings.debug,
+        workers=settings.workers,
+    )
