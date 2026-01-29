@@ -1,43 +1,31 @@
 """Session management endpoints."""
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from app.core.deps import CurrentUser, DBSession
+from app.schemas.session import (
+    MessageListResponse,
+    MessageResponse,
+    SessionCreate,
+    SessionListResponse,
+    SessionResponse,
+    SessionUpdate,
+)
+from app.services.session_service import SessionService
 
 router = APIRouter()
 
 
-class SessionCreate(BaseModel):
-    """Session creation request."""
-    project_id: str
-    title: str = "New Conversation"
-
-
-class SessionUpdate(BaseModel):
-    """Session update request."""
-    title: str | None = None
-
-
-class SessionResponse(BaseModel):
-    """Session response."""
-    id: str
-    project_id: str
-    title: str
-    created_at: str
-    last_modified: str
-
-
-class MessageResponse(BaseModel):
-    """Chat message response."""
-    id: str
-    session_id: str
-    role: str  # user, assistant, system
-    content: str
-    metadata: dict | None = None
-    created_at: str
-
-
-@router.get("/", response_model=list[SessionResponse])
-async def list_sessions(project_id: str | None = None):
+@router.get("/", response_model=SessionListResponse)
+async def list_sessions(
+    current_user: CurrentUser,
+    db: DBSession,
+    project_id: Optional[str] = Query(None, description="Filter by project"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+):
     """
     List sessions.
 
@@ -45,84 +33,160 @@ async def list_sessions(project_id: str | None = None):
     - Otherwise, list all user's sessions
     Requires authentication.
     """
-    # TODO: Implement session listing
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = SessionService(db)
+    sessions, total = await service.list_by_user(
+        user_id=current_user.id,
+        project_id=project_id,
+        skip=skip,
+        limit=limit,
+    )
+
+    return SessionListResponse(
+        sessions=[SessionResponse.model_validate(s) for s in sessions],
+        total=total,
     )
 
 
 @router.post("/", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
-async def create_session(session: SessionCreate):
+async def create_session(
+    current_user: CurrentUser,
+    db: DBSession,
+    session_data: SessionCreate,
+):
     """
     Create a new session.
 
     Requires authentication.
     """
-    # TODO: Implement session creation
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = SessionService(db)
+    session = await service.create(
+        user_id=current_user.id,
+        session_data=session_data,
     )
+    await db.commit()
+
+    return SessionResponse.model_validate(session)
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
-async def get_session(session_id: str):
+async def get_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+):
     """
     Get session details.
 
-    Requires authentication and access permission.
+    Requires authentication and ownership.
     """
-    # TODO: Implement session retrieval
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = SessionService(db)
+    session = await service.get_by_id_and_user(
+        session_id=session_id,
+        user_id=current_user.id,
     )
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+
+    return SessionResponse.model_validate(session)
 
 
 @router.put("/{session_id}", response_model=SessionResponse)
-async def update_session(session_id: str, session: SessionUpdate):
+async def update_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+    session_data: SessionUpdate,
+):
     """
     Update session.
 
-    Requires authentication and access permission.
+    Requires authentication and ownership.
     """
-    # TODO: Implement session update
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = SessionService(db)
+    session = await service.get_by_id_and_user(
+        session_id=session_id,
+        user_id=current_user.id,
     )
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+
+    session = await service.update(session, session_data)
+    await db.commit()
+
+    return SessionResponse.model_validate(session)
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_session(session_id: str):
+async def delete_session(
+    session_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+):
     """
     Delete session.
 
-    Requires authentication and access permission.
+    Requires authentication and ownership.
     """
-    # TODO: Implement session deletion
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = SessionService(db)
+    session = await service.get_by_id_and_user(
+        session_id=session_id,
+        user_id=current_user.id,
     )
 
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
 
-@router.get("/{session_id}/messages", response_model=list[MessageResponse])
+    await service.delete(session)
+    await db.commit()
+
+
+@router.get("/{session_id}/messages", response_model=MessageListResponse)
 async def get_messages(
     session_id: str,
-    limit: int = 100,
-    offset: int = 0,
+    current_user: CurrentUser,
+    db: DBSession,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
 ):
     """
     Get messages for a session.
 
     - Paginated results
-    - Ordered by created_at descending
-    Requires authentication and access permission.
+    - Ordered by created_at ascending
+    Requires authentication and ownership.
     """
-    # TODO: Implement message retrieval
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = SessionService(db)
+
+    # Verify session ownership
+    session = await service.get_by_id_and_user(
+        session_id=session_id,
+        user_id=current_user.id,
+    )
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+
+    messages, total = await service.get_messages(
+        session_id=session_id,
+        skip=skip,
+        limit=limit,
+    )
+
+    return MessageListResponse(
+        messages=[MessageResponse.model_validate(m) for m in messages],
+        total=total,
     )

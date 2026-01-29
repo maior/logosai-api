@@ -1,155 +1,226 @@
 """Project management endpoints."""
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query, status
+
+from app.core.deps import CurrentUser, DBSession
+from app.schemas.project import (
+    ProjectCreate,
+    ProjectListResponse,
+    ProjectResponse,
+    ProjectShareRequest,
+    ProjectUpdate,
+)
+from app.services.project_service import ProjectService
 
 router = APIRouter()
 
 
-class ProjectCreate(BaseModel):
-    """Project creation request."""
-    name: str
-    description: str = ""
-
-
-class ProjectUpdate(BaseModel):
-    """Project update request."""
-    name: str | None = None
-    description: str | None = None
-
-
-class ProjectResponse(BaseModel):
-    """Project response."""
-    id: str
-    name: str
-    description: str
-    owner_email: str
-    is_public: bool
-    created_at: str
-    updated_at: str
-
-
-class ProjectShareRequest(BaseModel):
-    """Project share request."""
-    email: str
-    share_type: str = "viewer"  # viewer, editor
-
-
-class ProjectShareResponse(BaseModel):
-    """Project share response."""
-    email: str
-    share_type: str
-    status: str
-
-
-@router.get("/", response_model=list[ProjectResponse])
-async def list_projects():
+@router.get("/", response_model=ProjectListResponse)
+async def list_projects(
+    current_user: CurrentUser,
+    db: DBSession,
+    include_archived: bool = Query(False, description="Include archived projects"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=100),
+):
     """
     List all projects for current user.
 
-    Includes owned and shared projects.
+    Returns owned projects (shared projects not yet implemented).
     Requires authentication.
     """
-    # TODO: Implement project listing
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = ProjectService(db)
+    projects, total = await service.list_by_owner(
+        owner_id=current_user.id,
+        include_archived=include_archived,
+        skip=skip,
+        limit=limit,
+    )
+
+    return ProjectListResponse(
+        projects=[ProjectResponse.model_validate(p) for p in projects],
+        total=total,
     )
 
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-async def create_project(project: ProjectCreate):
+async def create_project(
+    current_user: CurrentUser,
+    db: DBSession,
+    project_data: ProjectCreate,
+):
     """
     Create a new project.
 
     Requires authentication.
     """
-    # TODO: Implement project creation
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = ProjectService(db)
+    project = await service.create(
+        owner_id=current_user.id,
+        project_data=project_data,
     )
+    await db.commit()
+
+    return ProjectResponse.model_validate(project)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: str):
+async def get_project(
+    project_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+):
     """
     Get project details.
 
-    Requires authentication and access permission.
+    Requires authentication and ownership.
     """
-    # TODO: Implement project retrieval
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = ProjectService(db)
+    project = await service.get_by_id_and_owner(
+        project_id=project_id,
+        owner_id=current_user.id,
     )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    return ProjectResponse.model_validate(project)
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-async def update_project(project_id: str, project: ProjectUpdate):
+async def update_project(
+    project_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+    project_data: ProjectUpdate,
+):
     """
     Update project.
 
-    Requires authentication and owner/editor permission.
+    Requires authentication and ownership.
     """
-    # TODO: Implement project update
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = ProjectService(db)
+    project = await service.get_by_id_and_owner(
+        project_id=project_id,
+        owner_id=current_user.id,
     )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    project = await service.update(project, project_data)
+    await db.commit()
+
+    return ProjectResponse.model_validate(project)
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_project(project_id: str):
+async def delete_project(
+    project_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+):
     """
     Delete project.
 
-    Requires authentication and owner permission.
+    Requires authentication and ownership.
     """
-    # TODO: Implement project deletion
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+    service = ProjectService(db)
+    project = await service.get_by_id_and_owner(
+        project_id=project_id,
+        owner_id=current_user.id,
     )
 
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
 
-@router.post("/{project_id}/share", response_model=ProjectShareResponse)
-async def share_project(project_id: str, share: ProjectShareRequest):
+    await service.delete(project)
+    await db.commit()
+
+
+@router.post("/{project_id}/archive", response_model=ProjectResponse)
+async def archive_project(
+    project_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+):
+    """
+    Archive project.
+
+    Requires authentication and ownership.
+    """
+    service = ProjectService(db)
+    project = await service.get_by_id_and_owner(
+        project_id=project_id,
+        owner_id=current_user.id,
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    project = await service.archive(project)
+    await db.commit()
+
+    return ProjectResponse.model_validate(project)
+
+
+@router.post("/{project_id}/unarchive", response_model=ProjectResponse)
+async def unarchive_project(
+    project_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+):
+    """
+    Unarchive project.
+
+    Requires authentication and ownership.
+    """
+    service = ProjectService(db)
+    project = await service.get_by_id_and_owner(
+        project_id=project_id,
+        owner_id=current_user.id,
+    )
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Project not found",
+        )
+
+    project = await service.unarchive(project)
+    await db.commit()
+
+    return ProjectResponse.model_validate(project)
+
+
+@router.post("/{project_id}/share")
+async def share_project(
+    project_id: str,
+    current_user: CurrentUser,
+    share_data: ProjectShareRequest,
+):
     """
     Share project with another user.
 
-    Requires authentication and owner permission.
+    Requires authentication and ownership.
+
+    Note: Project sharing is not yet implemented.
     """
-    # TODO: Implement project sharing
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
-    )
-
-
-@router.get("/{project_id}/shares", response_model=list[ProjectShareResponse])
-async def list_shares(project_id: str):
-    """
-    List all shares for a project.
-
-    Requires authentication and owner permission.
-    """
-    # TODO: Implement share listing
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
-    )
-
-
-@router.delete("/{project_id}/shares/{email}", status_code=status.HTTP_204_NO_CONTENT)
-async def remove_share(project_id: str, email: str):
-    """
-    Remove share from a project.
-
-    Requires authentication and owner permission.
-    """
-    # TODO: Implement share removal
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Not implemented yet"
+        detail="Project sharing not implemented yet",
     )

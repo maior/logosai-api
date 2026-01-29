@@ -14,6 +14,25 @@ from app.schemas.user import (
     UserUpdate,
     UserInDB,
 )
+from app.schemas.project import (
+    ProjectBase,
+    ProjectCreate,
+    ProjectListResponse,
+    ProjectResponse,
+    ProjectShareRequest,
+    ProjectUpdate,
+)
+from app.schemas.session import (
+    MessageBase,
+    MessageCreate,
+    MessageListResponse,
+    MessageResponse,
+    SessionBase,
+    SessionCreate,
+    SessionListResponse,
+    SessionResponse,
+    SessionUpdate,
+)
 
 __all__ = [
     # Auth schemas
@@ -28,4 +47,22 @@ __all__ = [
     "UserResponse",
     "UserUpdate",
     "UserInDB",
+    # Project schemas
+    "ProjectBase",
+    "ProjectCreate",
+    "ProjectListResponse",
+    "ProjectResponse",
+    "ProjectShareRequest",
+    "ProjectUpdate",
+    # Session schemas
+    "SessionBase",
+    "SessionCreate",
+    "SessionListResponse",
+    "SessionResponse",
+    "SessionUpdate",
+    # Message schemas
+    "MessageBase",
+    "MessageCreate",
+    "MessageListResponse",
+    "MessageResponse",
 ]
