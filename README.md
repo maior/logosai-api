@@ -8,8 +8,8 @@ FastAPI 기반의 LogosAI 백엔드 서버입니다. 온톨로지 기반 멀티 
 - **프로젝트 관리**: 프로젝트 CRUD, 아카이브, 공유
 - **세션 관리**: 대화 세션 및 메시지 히스토리
 - **실시간 채팅**: SSE 스트리밍 기반 AI 응답
-- **문서 관리**: PDF 업로드 및 RAG 검색 (예정)
-- **마켓플레이스**: 에이전트 설치/관리 (예정)
+- **문서 관리**: 파일 업로드 및 RAG 검색
+- **마켓플레이스**: 에이전트 등록/검색/구매
 
 ## 기술 스택
 
@@ -145,14 +145,44 @@ uvicorn app.main:app --host 0.0.0.0 --port 8090 --workers 4
 | POST | `/api/v1/chat/stream` | 채팅 (SSE 스트리밍) |
 | GET | `/api/v1/chat/health` | 서비스 상태 |
 
-### 문서 (Documents) - 예정
+### 문서 (Documents)
 
 | Method | Endpoint | 설명 |
 |--------|----------|------|
 | GET | `/api/v1/documents/` | 문서 목록 |
 | POST | `/api/v1/documents/upload` | 문서 업로드 |
+| GET | `/api/v1/documents/{id}` | 문서 조회 |
+| PUT | `/api/v1/documents/{id}` | 문서 수정 |
 | DELETE | `/api/v1/documents/{id}` | 문서 삭제 |
 | POST | `/api/v1/documents/search` | RAG 검색 |
+| POST | `/api/v1/documents/{id}/reprocess` | 문서 재처리 |
+| GET | `/api/v1/documents/{id}/content` | 문서 내용 조회 |
+
+지원 파일 형식: PDF, TXT, Markdown, DOCX, CSV, JSON (최대 50MB)
+
+### 마켓플레이스 (Marketplace)
+
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| GET | `/api/v1/marketplace/agents` | 에이전트 검색/필터 |
+| GET | `/api/v1/marketplace/agents/featured` | 추천 에이전트 |
+| GET | `/api/v1/marketplace/agents/categories` | 카테고리 목록 |
+| POST | `/api/v1/marketplace/agents` | 에이전트 등록 |
+| GET | `/api/v1/marketplace/agents/my` | 내 에이전트 |
+| GET | `/api/v1/marketplace/agents/{id}` | 에이전트 상세 |
+| PUT | `/api/v1/marketplace/agents/{id}` | 에이전트 수정 |
+| DELETE | `/api/v1/marketplace/agents/{id}` | 에이전트 삭제 |
+| POST | `/api/v1/marketplace/agents/{id}/publish` | 에이전트 게시 |
+| POST | `/api/v1/marketplace/agents/{id}/unpublish` | 게시 취소 |
+| GET | `/api/v1/marketplace/agents/{id}/stats` | 통계 조회 |
+| GET | `/api/v1/marketplace/agents/{id}/reviews` | 리뷰 목록 |
+| POST | `/api/v1/marketplace/agents/{id}/reviews` | 리뷰 작성 |
+| PUT | `/api/v1/marketplace/agents/{id}/reviews` | 리뷰 수정 |
+| DELETE | `/api/v1/marketplace/agents/{id}/reviews` | 리뷰 삭제 |
+| POST | `/api/v1/marketplace/agents/{id}/purchase` | 에이전트 구매 |
+| GET | `/api/v1/marketplace/purchases` | 구매 내역 |
+
+가격 유형: 무료(free), 일회성(one_time), 구독(subscription), 사용량 기반(usage_based)
 
 ## SSE 스트리밍 이벤트
 
@@ -218,26 +248,34 @@ logos_api/
 │   │   ├── user.py
 │   │   ├── project.py
 │   │   ├── session.py
-│   │   └── message.py
+│   │   ├── message.py
+│   │   ├── document.py
+│   │   └── marketplace.py
 │   ├── routers/             # API 라우터
 │   │   ├── auth.py
 │   │   ├── users.py
 │   │   ├── projects.py
 │   │   ├── sessions.py
-│   │   └── chat.py
+│   │   ├── chat.py
+│   │   ├── documents.py
+│   │   └── marketplace.py
 │   ├── schemas/             # Pydantic 스키마
 │   │   ├── auth.py
 │   │   ├── user.py
 │   │   ├── project.py
 │   │   ├── session.py
-│   │   └── chat.py
+│   │   ├── chat.py
+│   │   ├── document.py
+│   │   └── marketplace.py
 │   ├── services/            # 비즈니스 로직
 │   │   ├── auth_service.py
 │   │   ├── user_service.py
 │   │   ├── project_service.py
 │   │   ├── session_service.py
 │   │   ├── chat_service.py
-│   │   └── acp_client.py
+│   │   ├── acp_client.py
+│   │   ├── document_service.py
+│   │   └── marketplace_service.py
 │   ├── config.py            # 설정
 │   ├── database.py          # DB 연결
 │   └── main.py              # 앱 엔트리포인트
