@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 
 from app.core.deps import CurrentUser, DBSession
 from app.models.document import DocumentStatus
@@ -20,6 +20,44 @@ from app.services.document_service import DocumentService, DocumentServiceError
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def process_document_background(
+    document_id: str,
+    user_id: str,
+    db_url: str,
+):
+    """
+    Background task to process document for RAG indexing.
+
+    Uses a new database session since background tasks run after response.
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy.orm import sessionmaker
+    from app.models.document import Document
+
+    try:
+        # Create new engine and session for background task
+        engine = create_async_engine(db_url)
+        async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+        async with async_session() as session:
+            service = DocumentService(session)
+            document = await service.get_by_id_and_user(document_id, user_id)
+
+            if document and document.status == DocumentStatus.PENDING:
+                try:
+                    await service.process_for_rag(document)
+                    await session.commit()
+                    logger.info(f"Background RAG processing completed for document {document_id}")
+                except Exception as e:
+                    await session.commit()  # Save failed status
+                    logger.error(f"Background RAG processing failed for {document_id}: {e}")
+
+        await engine.dispose()
+
+    except Exception as e:
+        logger.error(f"Background task error for document {document_id}: {e}")
 
 
 @router.get("/", response_model=DocumentListResponse)
@@ -68,10 +106,12 @@ async def list_documents(
 async def upload_document(
     current_user: CurrentUser,
     db: DBSession,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Document file to upload"),
     project_id: Optional[str] = Form(None, description="Project ID"),
     title: Optional[str] = Form(None, description="Document title"),
     description: Optional[str] = Form(None, description="Document description"),
+    auto_process: bool = Form(True, description="Automatically process for RAG indexing"),
 ):
     """
     Upload a document.
@@ -79,8 +119,13 @@ async def upload_document(
     Supported formats: PDF, TXT, MD, DOCX, CSV, JSON
     Maximum file size: 50MB
 
+    The document will be automatically processed for RAG indexing in the background
+    unless auto_process is set to False.
+
     Requires authentication.
     """
+    from app.config import settings
+
     service = DocumentService(db)
 
     try:
@@ -93,9 +138,21 @@ async def upload_document(
         )
         await db.commit()
 
+        # Queue background RAG processing if auto_process is enabled
+        if auto_process:
+            background_tasks.add_task(
+                process_document_background,
+                document_id=document.id,
+                user_id=current_user.id,
+                db_url=settings.database_url,
+            )
+            message = "Document uploaded successfully. RAG processing started in background."
+        else:
+            message = "Document uploaded successfully. Use /process endpoint to index for RAG."
+
         return DocumentUploadResponse(
             document=DocumentResponse.model_validate(document),
-            message="Document uploaded successfully. Processing will begin shortly.",
+            message=message,
         )
     except DocumentServiceError as e:
         raise HTTPException(
