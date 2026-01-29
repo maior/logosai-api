@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.document import Document, DocumentStatus, DocumentType
-from app.schemas.document import DocumentUpdate, DocumentSearchRequest
+from app.schemas.document import DocumentUpdate, DocumentSearchRequest, DocumentChunk
+from app.services.rag import RAGService, get_elasticsearch_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,14 @@ class DocumentService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+        self._rag_service: Optional[RAGService] = None
+
+    @property
+    def rag_service(self) -> RAGService:
+        """Get RAG service (lazy initialization)."""
+        if self._rag_service is None:
+            self._rag_service = RAGService()
+        return self._rag_service
 
     async def get_by_id(self, document_id: str) -> Optional[Document]:
         """Get document by ID."""
@@ -196,7 +205,13 @@ class DocumentService:
         return document
 
     async def delete(self, document: Document) -> None:
-        """Delete document and its file."""
+        """Delete document, its file, and RAG index entries."""
+        # Delete from RAG index first
+        try:
+            await self.delete_from_rag(document)
+        except Exception as e:
+            logger.warning(f"Failed to delete RAG data for {document.id}: {e}")
+
         # Delete file
         try:
             file_path = Path(document.file_path)
@@ -232,68 +247,168 @@ class DocumentService:
         await self.db.refresh(document)
         return document
 
+    async def process_for_rag(self, document: Document) -> dict[str, Any]:
+        """
+        Process document for RAG indexing.
+
+        Extracts text, creates chunks, generates embeddings,
+        and indexes to Elasticsearch.
+
+        Args:
+            document: Document to process
+
+        Returns:
+            Processing statistics
+
+        Raises:
+            DocumentServiceError: If processing fails
+        """
+        try:
+            # Update status to processing
+            await self.update_status(document, DocumentStatus.PROCESSING)
+
+            # Index document to Elasticsearch
+            stats = await self.rag_service.index_document(
+                file_path=document.file_path,
+                file_name=document.original_filename,
+                user_id=document.user_id,
+                document_id=document.id,
+                project_id=document.project_id,
+            )
+
+            # Update document with processing results
+            await self.update_status(
+                document,
+                DocumentStatus.COMPLETED,
+                chunk_count=stats.get("chunk_count", 0),
+                word_count=stats.get("total_chars", 0) // 5,  # Approximate word count
+            )
+
+            logger.info(f"Document {document.id} processed: {stats}")
+            return stats
+
+        except Exception as e:
+            error_msg = str(e)
+            logger.error(f"Failed to process document {document.id}: {error_msg}")
+            await self.update_status(
+                document,
+                DocumentStatus.FAILED,
+                error_message=error_msg,
+            )
+            raise DocumentServiceError(f"RAG processing failed: {error_msg}")
+
     async def search(
         self,
         user_id: str,
         request: DocumentSearchRequest,
     ) -> dict[str, Any]:
         """
-        Search documents using RAG.
-
-        Note: This is a placeholder. Actual implementation requires:
-        - Vector store integration (e.g., Milvus, Pinecone)
-        - Document chunking and embedding
+        Search documents using RAG hybrid search (keyword + vector).
 
         Args:
             user_id: User ID
-            request: Search request
+            request: Search request with query, filters, and options
 
         Returns:
-            Search results
+            Search results with relevance scores
         """
-        # Build base query for accessible documents
-        query = select(Document).where(
-            Document.user_id == user_id,
-            Document.status == DocumentStatus.COMPLETED,
-        )
+        try:
+            # Perform hybrid search via RAG service
+            results = await self.rag_service.search(
+                query=request.query,
+                user_id=user_id,
+                project_id=request.project_id,
+                document_ids=request.document_ids,
+                top_k=request.top_k,
+                min_score=request.threshold,
+            )
 
-        if request.project_id:
-            query = query.where(Document.project_id == request.project_id)
+            # Convert to response format
+            chunks = []
+            for r in results:
+                metadata = r.metadata or {}
+                chunks.append(
+                    DocumentChunk(
+                        document_id=metadata.get("document_id", ""),
+                        document_title=metadata.get("file_name", ""),
+                        content=r.content,
+                        page_number=metadata.get("page"),
+                        score=r.score,
+                        metadata=metadata,
+                    )
+                )
 
-        if request.document_ids:
-            query = query.where(Document.id.in_(request.document_ids))
+            return {
+                "query": request.query,
+                "results": [c.model_dump() for c in chunks],
+                "total_results": len(chunks),
+            }
 
-        result = await self.db.execute(query)
-        documents = list(result.scalars().all())
-
-        # TODO: Implement actual vector search
-        # For now, return empty results with structure
-        return {
-            "query": request.query,
-            "results": [],
-            "total_results": 0,
-        }
+        except Exception as e:
+            logger.error(f"Search failed: {e}")
+            # Return empty results on error
+            return {
+                "query": request.query,
+                "results": [],
+                "total_results": 0,
+            }
 
     async def get_content(self, document: Document) -> str:
         """
         Get document content as text.
 
-        Note: This is a placeholder. Actual implementation requires:
-        - PDF text extraction
-        - DOCX parsing
-        - etc.
+        Supports: PDF, TXT, MD, DOCX, CSV, JSON
+        Uses DocumentProcessor for text extraction.
         """
         file_path = Path(document.file_path)
 
         if not file_path.exists():
             raise DocumentServiceError("Document file not found")
 
-        # Simple text file reading
-        if document.document_type in [DocumentType.TXT, DocumentType.MD, DocumentType.CSV]:
-            async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
-                return await f.read()
+        try:
+            # Use DocumentProcessor for text extraction
+            processor = self.rag_service.document_processor
 
-        # TODO: Implement PDF, DOCX extraction
-        raise DocumentServiceError(
-            f"Content extraction not implemented for {document.document_type}"
-        )
+            # Get all chunks from document
+            chunks = await processor.process_file(
+                file_path=str(file_path),
+                file_name=document.original_filename,
+                user_id=document.user_id,
+                document_id=document.id,
+                project_id=document.project_id,
+            )
+
+            # Combine all chunk contents
+            content = "\n\n".join(chunk.page_content for chunk in chunks)
+            return content
+
+        except ValueError as e:
+            raise DocumentServiceError(str(e))
+        except Exception as e:
+            logger.error(f"Content extraction failed for {document.id}: {e}")
+            raise DocumentServiceError(f"Failed to extract content: {str(e)}")
+
+    async def delete_from_rag(self, document: Document) -> int:
+        """
+        Delete document chunks from RAG index.
+
+        Args:
+            document: Document to delete
+
+        Returns:
+            Number of deleted chunks
+        """
+        try:
+            deleted = await self.rag_service.delete_document(
+                document_id=document.id,
+                user_id=document.user_id,
+            )
+            logger.info(f"Deleted {deleted} chunks for document {document.id}")
+            return deleted
+        except Exception as e:
+            logger.error(f"Failed to delete RAG data for {document.id}: {e}")
+            return 0
+
+    async def check_rag_health(self) -> dict[str, Any]:
+        """Check RAG system health status."""
+        return await self.rag_service.health_check()

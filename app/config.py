@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     # ACP Server
     acp_server_url: str = "http://localhost:8888"
 
+    # ElasticSearch (RAG)
+    elasticsearch_url: str = "http://localhost:9200"
+    elasticsearch_index_docs: str = "logos_documents"
+    elasticsearch_index_images: str = "logos_images"
+
+    # Embedding Model
+    embedding_model_name: str = "jhgan/ko-sroberta-nli"
+    embedding_device: str = "cpu"
+
+    # Document Processing
+    chunk_size: int = 512
+    chunk_overlap: int = 128
+
     # CORS
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 

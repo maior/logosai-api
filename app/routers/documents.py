@@ -203,12 +203,12 @@ async def search_documents(
     """
     Search documents using RAG (Retrieval-Augmented Generation).
 
-    Searches through document content using semantic similarity.
-    Returns relevant chunks with their source documents.
+    Uses hybrid search combining:
+    - Keyword search (multi-field matching with boosting)
+    - Vector search (cosine similarity with Korean-optimized embeddings)
 
+    Returns relevant chunks with their source documents and relevance scores.
     Requires authentication.
-
-    Note: Full RAG implementation requires vector store integration.
     """
     service = DocumentService(db)
 
@@ -225,16 +225,18 @@ async def search_documents(
         )
 
 
-@router.post("/{document_id}/reprocess", response_model=DocumentResponse)
-async def reprocess_document(
+@router.post("/{document_id}/process", response_model=DocumentResponse)
+async def process_document(
     document_id: str,
     current_user: CurrentUser,
     db: DBSession,
 ):
     """
-    Reprocess a document.
+    Process a document for RAG indexing.
 
-    Useful for documents that failed processing or need re-indexing.
+    Extracts text, creates chunks with embeddings, and indexes to Elasticsearch.
+    This operation may take several seconds depending on document size.
+
     Requires authentication and ownership.
     """
     service = DocumentService(db)
@@ -249,17 +251,67 @@ async def reprocess_document(
             detail="Document not found",
         )
 
-    # Reset status to pending for reprocessing
-    document = await service.update_status(
-        document,
-        DocumentStatus.PENDING,
-        error_message=None,
+    if document.status == DocumentStatus.COMPLETED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Document already processed. Use /reprocess to re-index.",
+        )
+
+    try:
+        await service.process_for_rag(document)
+        await db.commit()
+        await db.refresh(document)
+        return DocumentResponse.model_validate(document)
+    except DocumentServiceError as e:
+        await db.commit()  # Save failed status
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@router.post("/{document_id}/reprocess", response_model=DocumentResponse)
+async def reprocess_document(
+    document_id: str,
+    current_user: CurrentUser,
+    db: DBSession,
+):
+    """
+    Reprocess a document for RAG re-indexing.
+
+    Deletes existing index entries and re-processes the document.
+    Useful for documents that need re-indexing after updates.
+
+    Requires authentication and ownership.
+    """
+    service = DocumentService(db)
+    document = await service.get_by_id_and_user(
+        document_id=document_id,
+        user_id=current_user.id,
     )
-    await db.commit()
 
-    # TODO: Queue for background processing
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
 
-    return DocumentResponse.model_validate(document)
+    try:
+        # Delete existing RAG entries
+        await service.delete_from_rag(document)
+
+        # Reprocess
+        await service.process_for_rag(document)
+        await db.commit()
+        await db.refresh(document)
+
+        return DocumentResponse.model_validate(document)
+    except DocumentServiceError as e:
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
 
 
 @router.get("/{document_id}/content")
@@ -271,10 +323,10 @@ async def get_document_content(
     """
     Get document content as text.
 
-    Requires authentication and ownership.
+    Supports: PDF, TXT, MD, DOCX, CSV, JSON
+    Uses the document processor for text extraction.
 
-    Note: Only available for text-based documents (TXT, MD, CSV).
-    PDF and DOCX require processing.
+    Requires authentication and ownership.
     """
     service = DocumentService(db)
     document = await service.get_by_id_and_user(
@@ -300,3 +352,29 @@ async def get_document_content(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+@router.get("/rag/health")
+async def check_rag_health(
+    current_user: CurrentUser,
+    db: DBSession,
+):
+    """
+    Check RAG system health.
+
+    Returns Elasticsearch connection status and index information.
+    Requires authentication.
+    """
+    service = DocumentService(db)
+
+    try:
+        health = await service.check_rag_health()
+        return {
+            "status": "healthy" if health.get("elasticsearch") else "unhealthy",
+            "details": health,
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "details": {"error": str(e)},
+        }
