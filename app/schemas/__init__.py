@@ -33,6 +33,11 @@ from app.schemas.session import (
     SessionResponse,
     SessionUpdate,
 )
+from app.schemas.chat import (
+    ChatRequest,
+    ChatResponse,
+    RegenerateRequest,
+)
 
 __all__ = [
     # Auth schemas
@@ -65,4 +70,8 @@ __all__ = [
     "MessageCreate",
     "MessageListResponse",
     "MessageResponse",
+    # Chat schemas
+    "ChatRequest",
+    "ChatResponse",
+    "RegenerateRequest",
 ]

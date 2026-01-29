@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_db, close_db
+from app.services.acp_client import close_acp_client
 
 # Import routers
 from app.routers import auth, users, projects, sessions, chat, health
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     print("👋 Shutting down...")
+    await close_acp_client()
     await close_db()
 
 
