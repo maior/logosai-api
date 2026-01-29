@@ -60,6 +60,10 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    documents: Mapped[list["Document"]] = relationship(
+        "Document",
+        back_populates="project",
+    )
 
     def __repr__(self) -> str:
         return f"<Project(id={self.id}, name={self.name})>"
@@ -68,3 +72,4 @@ class Project(Base):
 # Import for type hints
 from app.models.user import User
 from app.models.session import Session
+from app.models.document import Document

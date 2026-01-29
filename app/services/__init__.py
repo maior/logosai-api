@@ -6,6 +6,7 @@ from app.services.project_service import ProjectService
 from app.services.session_service import SessionService
 from app.services.chat_service import ChatService
 from app.services.acp_client import ACPClient, get_acp_client, close_acp_client
+from app.services.document_service import DocumentService, DocumentServiceError
 
 __all__ = [
     "AuthService",
@@ -16,4 +17,6 @@ __all__ = [
     "ACPClient",
     "get_acp_client",
     "close_acp_client",
+    "DocumentService",
+    "DocumentServiceError",
 ]

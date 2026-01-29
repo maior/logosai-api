@@ -38,6 +38,18 @@ from app.schemas.chat import (
     ChatResponse,
     RegenerateRequest,
 )
+from app.schemas.document import (
+    DocumentBase,
+    DocumentCreate,
+    DocumentUpdate,
+    DocumentResponse,
+    DocumentListResponse,
+    DocumentUploadResponse,
+    DocumentSearchRequest,
+    DocumentSearchResponse,
+    DocumentChunk,
+    DocumentProcessingStatus,
+)
 
 __all__ = [
     # Auth schemas
@@ -74,4 +86,15 @@ __all__ = [
     "ChatRequest",
     "ChatResponse",
     "RegenerateRequest",
+    # Document schemas
+    "DocumentBase",
+    "DocumentCreate",
+    "DocumentUpdate",
+    "DocumentResponse",
+    "DocumentListResponse",
+    "DocumentUploadResponse",
+    "DocumentSearchRequest",
+    "DocumentSearchResponse",
+    "DocumentChunk",
+    "DocumentProcessingStatus",
 ]

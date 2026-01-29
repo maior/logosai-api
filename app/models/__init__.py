@@ -4,6 +4,7 @@ from app.models.user import User
 from app.models.project import Project
 from app.models.session import Session
 from app.models.message import Message, MessageRole
+from app.models.document import Document, DocumentStatus, DocumentType
 
 __all__ = [
     "User",
@@ -11,4 +12,7 @@ __all__ = [
     "Session",
     "Message",
     "MessageRole",
+    "Document",
+    "DocumentStatus",
+    "DocumentType",
 ]
