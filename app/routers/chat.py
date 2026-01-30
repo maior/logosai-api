@@ -1,8 +1,12 @@
-"""Chat and streaming endpoints."""
+"""Chat and streaming endpoints.
+
+Provides website-compatible API responses for the chat system.
+"""
 
 import json
 import logging
-from typing import AsyncGenerator
+from datetime import datetime, timezone
+from typing import Any, AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, status
 from sse_starlette.sse import EventSourceResponse
@@ -20,14 +24,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/", response_model=ChatResponse)
+@router.post("/")
 async def chat(
     current_user: CurrentUser,
     db: DBSession,
     request: ChatRequest,
-):
+) -> dict[str, Any]:
     """
     Send a chat message and get response.
+
+    Returns website-compatible format:
+    {
+        "msg": "success",
+        "code": 0,
+        "data": {
+            "result": "...",
+            "usage_id": "...",
+            "references": [...],
+            ...
+        }
+    }
 
     - Synchronous response (waits for complete response)
     - Use /stream for real-time streaming
@@ -41,13 +57,49 @@ async def chat(
             user_email=current_user.email,
             request=request,
         )
-        return ChatResponse(**result)
+
+        # Return website-compatible format
+        return {
+            "msg": "success",
+            "code": 0,
+            "data": {
+                "result": result.get("content", ""),
+                "usage_id": result.get("message_id", ""),
+                "reasoning": "",
+                "category": result.get("agent_type", ""),
+                "references": [],
+                "pdf_names": [],
+                "image_results": {},
+                "agent_results": [{
+                    "agent_id": result.get("agent_type", "default"),
+                    "agent_name": result.get("agent_type", "Default Agent"),
+                    "step_id": "step-1",
+                    "result": result.get("content", ""),
+                    "execution_time": 0,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 1.0,
+                    "agentType": result.get("agent_type", ""),
+                }],
+                # Legacy fields
+                "message_id": result.get("message_id", ""),
+                "session_id": result.get("session_id", ""),
+                "content": result.get("content", ""),
+                "agent_type": result.get("agent_type"),
+                "tokens_used": result.get("tokens_used"),
+                "created_at": result.get("created_at").isoformat() if result.get("created_at") else None,
+            },
+        }
     except Exception as e:
         logger.error(f"Chat error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to process chat: {str(e)}",
-        )
+        return {
+            "msg": "error",
+            "code": 500,
+            "data": {
+                "error": str(e),
+                "result": "",
+                "usage_id": "",
+            },
+        }
 
 
 @router.post("/stream")

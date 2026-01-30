@@ -1,4 +1,4 @@
-"""Document management endpoints."""
+"""Document management endpoints - uses user_files table from logos_server."""
 
 import logging
 from typing import Optional
@@ -6,15 +6,6 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile, status
 
 from app.core.deps import CurrentUser, DBSession
-from app.models.document import DocumentStatus
-from app.schemas.document import (
-    DocumentListResponse,
-    DocumentResponse,
-    DocumentSearchRequest,
-    DocumentSearchResponse,
-    DocumentUpdate,
-    DocumentUploadResponse,
-)
 from app.services.document_service import DocumentService, DocumentServiceError
 
 logger = logging.getLogger(__name__)
@@ -22,105 +13,94 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def process_document_background(
-    document_id: str,
-    user_id: str,
+async def process_file_background(
+    file_id: str,
+    user_email: str,
+    project_id: str,
     db_url: str,
 ):
     """
-    Background task to process document for RAG indexing.
-
-    Uses a new database session since background tasks run after response.
+    Background task to process file for RAG indexing.
     """
     from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy.orm import sessionmaker
-    from app.models.document import Document
 
     try:
-        # Create new engine and session for background task
         engine = create_async_engine(db_url)
         async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
         async with async_session() as session:
             service = DocumentService(session)
-            document = await service.get_by_id_and_user(document_id, user_id)
+            user_file = await service.get_by_id_and_user(file_id, user_email)
 
-            if document and document.status == DocumentStatus.PENDING:
+            if user_file:
                 try:
-                    await service.process_for_rag(document)
-                    await session.commit()
-                    logger.info(f"Background RAG processing completed for document {document_id}")
+                    await service.process_for_rag(user_file)
+                    logger.info(f"Background RAG processing completed for file {file_id}")
                 except Exception as e:
-                    await session.commit()  # Save failed status
-                    logger.error(f"Background RAG processing failed for {document_id}: {e}")
+                    logger.error(f"Background RAG processing failed for {file_id}: {e}")
 
         await engine.dispose()
 
     except Exception as e:
-        logger.error(f"Background task error for document {document_id}: {e}")
+        logger.error(f"Background task error for file {file_id}: {e}")
 
 
-@router.get("/", response_model=DocumentListResponse)
-async def list_documents(
+@router.get("/")
+async def list_files(
     current_user: CurrentUser,
     db: DBSession,
     project_id: Optional[str] = Query(None, description="Filter by project"),
-    status_filter: Optional[str] = Query(None, alias="status", description="Filter by status"),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=100),
 ):
     """
-    List documents for current user.
+    List files for current user.
 
-    Optionally filter by project and/or status.
+    Optionally filter by project.
     Requires authentication.
     """
     service = DocumentService(db)
 
-    # Parse status filter
-    doc_status = None
-    if status_filter:
-        try:
-            doc_status = DocumentStatus(status_filter)
-        except ValueError:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid status. Valid values: {[s.value for s in DocumentStatus]}",
-            )
-
-    documents, total = await service.list_by_user(
-        user_id=current_user.id,
+    files, total = await service.list_by_user(
+        user_email=current_user.email,
         project_id=project_id,
-        status=doc_status,
         skip=skip,
         limit=limit,
     )
 
-    return DocumentListResponse(
-        documents=[DocumentResponse.model_validate(d) for d in documents],
-        total=total,
-    )
+    return {
+        "files": [
+            {
+                "file_id": f.file_id,
+                "project_id": f.project_id,
+                "project_name": f.project_name,
+                "file_name": f.file_name,
+                "file_size": f.file_size,
+                "file_type": f.file_type,
+                "upload_at": f.upload_at.isoformat() if f.upload_at else None,
+            }
+            for f in files
+        ],
+        "total": total,
+    }
 
 
-@router.post("/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
-async def upload_document(
+@router.post("/upload", status_code=status.HTTP_201_CREATED)
+async def upload_file(
     current_user: CurrentUser,
     db: DBSession,
     background_tasks: BackgroundTasks,
-    file: UploadFile = File(..., description="Document file to upload"),
-    project_id: Optional[str] = Form(None, description="Project ID"),
-    title: Optional[str] = Form(None, description="Document title"),
-    description: Optional[str] = Form(None, description="Document description"),
+    file: UploadFile = File(..., description="File to upload"),
+    project_id: str = Form(..., description="Project ID (required)"),
+    project_name: Optional[str] = Form(None, description="Project name"),
     auto_process: bool = Form(True, description="Automatically process for RAG indexing"),
 ):
     """
-    Upload a document.
+    Upload a file.
 
     Supported formats: PDF, TXT, MD, DOCX, CSV, JSON
     Maximum file size: 50MB
-
-    The document will be automatically processed for RAG indexing in the background
-    unless auto_process is set to False.
 
     Requires authentication.
     """
@@ -129,280 +109,225 @@ async def upload_document(
     service = DocumentService(db)
 
     try:
-        document = await service.upload(
-            user_id=current_user.id,
+        user_file = await service.upload(
+            user_email=current_user.email,
             file=file,
             project_id=project_id,
-            title=title,
-            description=description,
+            project_name=project_name,
         )
         await db.commit()
 
-        # Queue background RAG processing if auto_process is enabled
+        # Queue background RAG processing
         if auto_process:
             background_tasks.add_task(
-                process_document_background,
-                document_id=document.id,
-                user_id=current_user.id,
+                process_file_background,
+                file_id=user_file.file_id,
+                user_email=current_user.email,
+                project_id=project_id,
                 db_url=settings.database_url,
             )
-            message = "Document uploaded successfully. RAG processing started in background."
+            message = "File uploaded. RAG processing started in background."
         else:
-            message = "Document uploaded successfully. Use /process endpoint to index for RAG."
+            message = "File uploaded. Use /process endpoint to index for RAG."
 
-        return DocumentUploadResponse(
-            document=DocumentResponse.model_validate(document),
-            message=message,
-        )
+        return {
+            "file": {
+                "file_id": user_file.file_id,
+                "project_id": user_file.project_id,
+                "file_name": user_file.file_name,
+                "file_size": user_file.file_size,
+                "file_type": user_file.file_type,
+                "upload_at": user_file.upload_at.isoformat() if user_file.upload_at else None,
+            },
+            "message": message,
+        }
     except DocumentServiceError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    except Exception as e:
-        logger.error(f"Upload error: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload document",
-        )
 
 
-@router.get("/{document_id}", response_model=DocumentResponse)
-async def get_document(
-    document_id: str,
+@router.get("/{file_id}")
+async def get_file(
+    file_id: str,
     current_user: CurrentUser,
     db: DBSession,
 ):
     """
-    Get document details.
+    Get file details.
 
     Requires authentication and ownership.
     """
     service = DocumentService(db)
-    document = await service.get_by_id_and_user(
-        document_id=document_id,
-        user_id=current_user.id,
+    user_file = await service.get_by_id_and_user(
+        file_id=file_id,
+        user_email=current_user.email,
     )
 
-    if not document:
+    if not user_file:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
+            detail="File not found",
         )
 
-    return DocumentResponse.model_validate(document)
+    return {
+        "file_id": user_file.file_id,
+        "project_id": user_file.project_id,
+        "project_name": user_file.project_name,
+        "user_email": user_file.user_email,
+        "file_name": user_file.file_name,
+        "file_size": user_file.file_size,
+        "file_type": user_file.file_type,
+        "upload_at": user_file.upload_at.isoformat() if user_file.upload_at else None,
+    }
 
 
-@router.put("/{document_id}", response_model=DocumentResponse)
-async def update_document(
-    document_id: str,
-    current_user: CurrentUser,
-    db: DBSession,
-    update_data: DocumentUpdate,
-):
-    """
-    Update document metadata.
-
-    Requires authentication and ownership.
-    """
-    service = DocumentService(db)
-    document = await service.get_by_id_and_user(
-        document_id=document_id,
-        user_id=current_user.id,
-    )
-
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    document = await service.update(document, update_data)
-    await db.commit()
-
-    return DocumentResponse.model_validate(document)
-
-
-@router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_document(
-    document_id: str,
+@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_file(
+    file_id: str,
     current_user: CurrentUser,
     db: DBSession,
 ):
     """
-    Delete a document.
+    Delete a file (soft delete).
 
-    This will also delete the file from storage.
     Requires authentication and ownership.
     """
     service = DocumentService(db)
-    document = await service.get_by_id_and_user(
-        document_id=document_id,
-        user_id=current_user.id,
+    user_file = await service.get_by_id_and_user(
+        file_id=file_id,
+        user_email=current_user.email,
     )
 
-    if not document:
+    if not user_file:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
+            detail="File not found",
         )
 
-    await service.delete(document)
+    await service.delete(user_file)
     await db.commit()
 
 
-@router.post("/search", response_model=DocumentSearchResponse)
-async def search_documents(
+@router.post("/search")
+async def search_files(
     current_user: CurrentUser,
     db: DBSession,
-    request: DocumentSearchRequest,
+    query: str = Form(..., description="Search query"),
+    project_id: Optional[str] = Form(None, description="Filter by project"),
+    top_k: int = Form(5, ge=1, le=20, description="Number of results"),
 ):
     """
-    Search documents using RAG (Retrieval-Augmented Generation).
+    Search files using RAG (Retrieval-Augmented Generation).
 
-    Uses hybrid search combining:
-    - Keyword search (multi-field matching with boosting)
-    - Vector search (cosine similarity with Korean-optimized embeddings)
+    Returns website-compatible format:
+    {
+        "msg": "success",
+        "code": 0,
+        "data": {
+            "query": "...",
+            "results": [...],
+            "references": [...],
+            "pdf_names": [...],
+            ...
+        }
+    }
 
-    Returns relevant chunks with their source documents and relevance scores.
+    Uses hybrid search: keyword + vector similarity with reranking.
     Requires authentication.
     """
     service = DocumentService(db)
 
     try:
+        # Already returns website-compatible format
         results = await service.search(
-            user_id=current_user.id,
-            request=request,
+            user_email=current_user.email,
+            query=query,
+            project_id=project_id,
+            top_k=top_k,
         )
-        return DocumentSearchResponse(**results)
+        return results
     except DocumentServiceError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+        return {
+            "msg": "error",
+            "code": 400,
+            "data": {
+                "query": query,
+                "results": [],
+                "error": str(e),
+            },
+        }
 
 
-@router.post("/{document_id}/process", response_model=DocumentResponse)
-async def process_document(
-    document_id: str,
+@router.post("/{file_id}/process")
+async def process_file(
+    file_id: str,
     current_user: CurrentUser,
     db: DBSession,
 ):
     """
-    Process a document for RAG indexing.
+    Process a file for RAG indexing.
 
     Extracts text, creates chunks with embeddings, and indexes to Elasticsearch.
-    This operation may take several seconds depending on document size.
-
     Requires authentication and ownership.
     """
     service = DocumentService(db)
-    document = await service.get_by_id_and_user(
-        document_id=document_id,
-        user_id=current_user.id,
+    user_file = await service.get_by_id_and_user(
+        file_id=file_id,
+        user_email=current_user.email,
     )
 
-    if not document:
+    if not user_file:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    if document.status == DocumentStatus.COMPLETED:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Document already processed. Use /reprocess to re-index.",
+            detail="File not found",
         )
 
     try:
-        await service.process_for_rag(document)
-        await db.commit()
-        await db.refresh(document)
-        return DocumentResponse.model_validate(document)
+        stats = await service.process_for_rag(user_file)
+        return {
+            "file_id": file_id,
+            "message": "File processed successfully",
+            "stats": stats,
+        }
     except DocumentServiceError as e:
-        await db.commit()  # Save failed status
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
         )
 
 
-@router.post("/{document_id}/reprocess", response_model=DocumentResponse)
-async def reprocess_document(
-    document_id: str,
+@router.get("/{file_id}/content")
+async def get_file_content(
+    file_id: str,
     current_user: CurrentUser,
     db: DBSession,
 ):
     """
-    Reprocess a document for RAG re-indexing.
-
-    Deletes existing index entries and re-processes the document.
-    Useful for documents that need re-indexing after updates.
-
-    Requires authentication and ownership.
-    """
-    service = DocumentService(db)
-    document = await service.get_by_id_and_user(
-        document_id=document_id,
-        user_id=current_user.id,
-    )
-
-    if not document:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
-        )
-
-    try:
-        # Delete existing RAG entries
-        await service.delete_from_rag(document)
-
-        # Reprocess
-        await service.process_for_rag(document)
-        await db.commit()
-        await db.refresh(document)
-
-        return DocumentResponse.model_validate(document)
-    except DocumentServiceError as e:
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
-        )
-
-
-@router.get("/{document_id}/content")
-async def get_document_content(
-    document_id: str,
-    current_user: CurrentUser,
-    db: DBSession,
-):
-    """
-    Get document content as text.
+    Get file content as text.
 
     Supports: PDF, TXT, MD, DOCX, CSV, JSON
-    Uses the document processor for text extraction.
-
     Requires authentication and ownership.
     """
     service = DocumentService(db)
-    document = await service.get_by_id_and_user(
-        document_id=document_id,
-        user_id=current_user.id,
+    user_file = await service.get_by_id_and_user(
+        file_id=file_id,
+        user_email=current_user.email,
     )
 
-    if not document:
+    if not user_file:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document not found",
+            detail="File not found",
         )
 
     try:
-        content = await service.get_content(document)
+        content = await service.get_content(user_file)
         return {
-            "document_id": document_id,
+            "file_id": file_id,
+            "file_name": user_file.file_name,
             "content": content,
-            "content_type": "text/plain",
         }
     except DocumentServiceError as e:
         raise HTTPException(
@@ -419,7 +344,7 @@ async def check_rag_health(
     """
     Check RAG system health.
 
-    Returns Elasticsearch connection status and index information.
+    Returns Elasticsearch connection status.
     Requires authentication.
     """
     service = DocumentService(db)

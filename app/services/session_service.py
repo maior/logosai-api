@@ -28,26 +28,26 @@ class SessionService:
     async def get_by_id_and_user(
         self,
         session_id: str,
-        user_id: str,
+        user_email: str,
     ) -> Optional[Session]:
-        """Get session by ID and user."""
+        """Get session by ID and user email."""
         result = await self.db.execute(
             select(Session).where(
                 Session.id == session_id,
-                Session.user_id == user_id,
+                Session.user_email == user_email,
             )
         )
         return result.scalar_one_or_none()
 
     async def list_by_user(
         self,
-        user_id: str,
+        user_email: str,
         project_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 100,
     ) -> tuple[list[Session], int]:
-        """List sessions by user."""
-        query = select(Session).where(Session.user_id == user_id)
+        """List sessions by user email."""
+        query = select(Session).where(Session.user_email == user_email)
 
         if project_id:
             query = query.where(Session.project_id == project_id)
@@ -67,12 +67,12 @@ class SessionService:
 
     async def create(
         self,
-        user_id: str,
+        user_email: str,
         session_data: SessionCreate,
     ) -> Session:
         """Create a new session."""
         session = Session(
-            user_id=user_id,
+            user_email=user_email,
             title=session_data.title,
             project_id=session_data.project_id,
         )

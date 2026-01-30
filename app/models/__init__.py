@@ -4,7 +4,7 @@ from app.models.user import User
 from app.models.project import Project
 from app.models.session import Session
 from app.models.message import Message, MessageRole
-from app.models.document import Document, DocumentStatus, DocumentType
+from app.models.document import UserFile, Document  # Document is alias for UserFile
 from app.models.marketplace import (
     MarketplaceAgent,
     AgentReview,
@@ -19,9 +19,8 @@ __all__ = [
     "Session",
     "Message",
     "MessageRole",
+    "UserFile",
     "Document",
-    "DocumentStatus",
-    "DocumentType",
     "MarketplaceAgent",
     "AgentReview",
     "AgentPurchase",

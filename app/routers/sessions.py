@@ -35,7 +35,7 @@ async def list_sessions(
     """
     service = SessionService(db)
     sessions, total = await service.list_by_user(
-        user_id=current_user.id,
+        user_email=current_user.email,
         project_id=project_id,
         skip=skip,
         limit=limit,
@@ -60,7 +60,7 @@ async def create_session(
     """
     service = SessionService(db)
     session = await service.create(
-        user_id=current_user.id,
+        user_email=current_user.email,
         session_data=session_data,
     )
     await db.commit()
@@ -82,7 +82,7 @@ async def get_session(
     service = SessionService(db)
     session = await service.get_by_id_and_user(
         session_id=session_id,
-        user_id=current_user.id,
+        user_email=current_user.email,
     )
 
     if not session:
@@ -109,7 +109,7 @@ async def update_session(
     service = SessionService(db)
     session = await service.get_by_id_and_user(
         session_id=session_id,
-        user_id=current_user.id,
+        user_email=current_user.email,
     )
 
     if not session:
@@ -138,7 +138,7 @@ async def delete_session(
     service = SessionService(db)
     session = await service.get_by_id_and_user(
         session_id=session_id,
-        user_id=current_user.id,
+        user_email=current_user.email,
     )
 
     if not session:
@@ -171,7 +171,7 @@ async def get_messages(
     # Verify session ownership
     session = await service.get_by_id_and_user(
         session_id=session_id,
-        user_id=current_user.id,
+        user_email=current_user.email,
     )
 
     if not session:

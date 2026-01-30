@@ -1,4 +1,7 @@
-"""FastAPI dependencies for authentication and database."""
+"""FastAPI dependencies for authentication and database.
+
+Uses email as the primary user identifier (matching logos_server).
+"""
 
 from typing import Annotated, Optional
 
@@ -22,6 +25,8 @@ async def get_current_user(
 ) -> User:
     """
     Get current authenticated user from JWT token.
+
+    Uses email as the user identifier (matching logos_server).
 
     Args:
         credentials: HTTP Bearer credentials
@@ -58,9 +63,10 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get user from database
+    # Get user from database by email (logos_server uses email as identifier)
+    user_email = payload.get("email") or payload.get("sub")
     user_service = UserService(db)
-    user = await user_service.get_by_id(payload["sub"])
+    user = await user_service.get_by_email(user_email)
 
     if not user:
         raise HTTPException(
@@ -69,12 +75,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User is inactive",
-        )
-
+    # is_active is always True (property in User model)
     return user
 
 

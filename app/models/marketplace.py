@@ -43,7 +43,12 @@ class PricingType(str, enum.Enum):
 
 
 class MarketplaceAgent(Base):
-    """Marketplace agent listing model."""
+    """Marketplace agent listing model.
+
+    Note: This table doesn't exist in logos_server (logosai schema).
+    It's a new table for logos_api marketplace.
+    Uses creator_email to reference logosai.users.email.
+    """
 
     __tablename__ = "marketplace_agents"
 
@@ -59,10 +64,10 @@ class MarketplaceAgent(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
     short_description: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
-    # Creator/Publisher
-    creator_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
+    # Creator/Publisher - uses email to reference users (logos_server uses email as primary key)
+    creator_email: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("logosai.users.email", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -134,7 +139,7 @@ class MarketplaceAgent(Base):
     )
 
     # Relationships
-    creator: Mapped["User"] = relationship("User", back_populates="marketplace_agents")
+    creator: Mapped["User"] = relationship("User", back_populates="marketplace_agents", foreign_keys=[creator_email])
     reviews: Mapped[list["AgentReview"]] = relationship(
         "AgentReview",
         back_populates="agent",
@@ -146,6 +151,12 @@ class MarketplaceAgent(Base):
         cascade="all, delete-orphan",
     )
 
+    # Compatibility property
+    @property
+    def creator_id(self) -> str:
+        """Return creator_email for compatibility."""
+        return self.creator_email
+
     def __repr__(self) -> str:
         return f"<MarketplaceAgent(id={self.id}, name={self.name})>"
 
@@ -155,7 +166,7 @@ class AgentReview(Base):
 
     __tablename__ = "agent_reviews"
     __table_args__ = (
-        UniqueConstraint("agent_id", "user_id", name="uq_agent_user_review"),
+        UniqueConstraint("agent_id", "user_email", name="uq_agent_user_review"),
     )
 
     id: Mapped[str] = mapped_column(
@@ -171,9 +182,9 @@ class AgentReview(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
+    user_email: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("logosai.users.email", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -205,7 +216,13 @@ class AgentReview(Base):
 
     # Relationships
     agent: Mapped["MarketplaceAgent"] = relationship("MarketplaceAgent", back_populates="reviews")
-    user: Mapped["User"] = relationship("User", back_populates="agent_reviews")
+    user: Mapped["User"] = relationship("User", back_populates="agent_reviews", foreign_keys=[user_email])
+
+    # Compatibility property
+    @property
+    def user_id(self) -> str:
+        """Return user_email for compatibility."""
+        return self.user_email
 
     def __repr__(self) -> str:
         return f"<AgentReview(id={self.id}, rating={self.rating})>"
@@ -229,9 +246,9 @@ class AgentPurchase(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
+    user_email: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("logosai.users.email", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -268,7 +285,13 @@ class AgentPurchase(Base):
 
     # Relationships
     agent: Mapped["MarketplaceAgent"] = relationship("MarketplaceAgent", back_populates="purchases")
-    user: Mapped["User"] = relationship("User", back_populates="agent_purchases")
+    user: Mapped["User"] = relationship("User", back_populates="agent_purchases", foreign_keys=[user_email])
+
+    # Compatibility property
+    @property
+    def user_id(self) -> str:
+        """Return user_email for compatibility."""
+        return self.user_email
 
     def __repr__(self) -> str:
         return f"<AgentPurchase(id={self.id}, agent_id={self.agent_id})>"

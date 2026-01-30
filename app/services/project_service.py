@@ -26,26 +26,26 @@ class ProjectService:
     async def get_by_id_and_owner(
         self,
         project_id: str,
-        owner_id: str,
+        owner_email: str,
     ) -> Optional[Project]:
-        """Get project by ID and owner."""
+        """Get project by ID and owner email."""
         result = await self.db.execute(
             select(Project).where(
                 Project.id == project_id,
-                Project.owner_id == owner_id,
+                Project.owner_email == owner_email,
             )
         )
         return result.scalar_one_or_none()
 
     async def list_by_owner(
         self,
-        owner_id: str,
+        owner_email: str,
         include_archived: bool = False,
         skip: int = 0,
         limit: int = 100,
     ) -> tuple[list[Project], int]:
-        """List projects by owner."""
-        query = select(Project).where(Project.owner_id == owner_id)
+        """List projects by owner email."""
+        query = select(Project).where(Project.owner_email == owner_email)
 
         if not include_archived:
             query = query.where(Project.is_archived == False)
@@ -65,12 +65,12 @@ class ProjectService:
 
     async def create(
         self,
-        owner_id: str,
+        owner_email: str,
         project_data: ProjectCreate,
     ) -> Project:
         """Create a new project."""
         project = Project(
-            owner_id=owner_id,
+            owner_email=owner_email,
             name=project_data.name,
             description=project_data.description,
             color=project_data.color,

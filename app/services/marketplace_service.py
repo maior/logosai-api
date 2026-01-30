@@ -54,7 +54,7 @@ class MarketplaceService:
 
     async def create_agent(
         self,
-        creator_id: str,
+        creator_email: str,
         data: AgentCreate,
     ) -> MarketplaceAgent:
         """Create a new agent listing."""
@@ -64,7 +64,7 @@ class MarketplaceService:
             raise MarketplaceServiceError("Price is required for paid agents")
 
         agent = MarketplaceAgent(
-            creator_id=creator_id,
+            creator_email=creator_email,
             name=data.name,
             slug=self._generate_slug(data.name),
             description=data.description,
@@ -89,7 +89,7 @@ class MarketplaceService:
         await self.db.flush()
         await self.db.refresh(agent)
 
-        logger.info(f"Agent {agent.id} created by user {creator_id}")
+        logger.info(f"Agent {agent.id} created by user {creator_email}")
         return agent
 
     async def get_agent_by_id(self, agent_id: str) -> Optional[MarketplaceAgent]:
@@ -238,13 +238,13 @@ class MarketplaceService:
 
     async def get_user_agents(
         self,
-        user_id: str,
+        user_email: str,
         status: Optional[AgentStatus] = None,
         skip: int = 0,
         limit: int = 20,
     ) -> tuple[list[MarketplaceAgent], int]:
         """Get agents created by user."""
-        query = select(MarketplaceAgent).where(MarketplaceAgent.creator_id == user_id)
+        query = select(MarketplaceAgent).where(MarketplaceAgent.creator_email == user_email)
 
         if status:
             query = query.where(MarketplaceAgent.status == status)
@@ -302,7 +302,7 @@ class MarketplaceService:
     async def create_review(
         self,
         agent_id: str,
-        user_id: str,
+        user_email: str,
         data: ReviewCreate,
     ) -> AgentReview:
         """Create a review for an agent."""
@@ -310,7 +310,7 @@ class MarketplaceService:
         existing = await self.db.execute(
             select(AgentReview).where(
                 AgentReview.agent_id == agent_id,
-                AgentReview.user_id == user_id,
+                AgentReview.user_email == user_email,
             )
         )
         if existing.scalar_one_or_none():
@@ -320,14 +320,14 @@ class MarketplaceService:
         purchase = await self.db.execute(
             select(AgentPurchase).where(
                 AgentPurchase.agent_id == agent_id,
-                AgentPurchase.user_id == user_id,
+                AgentPurchase.user_email == user_email,
             )
         )
         is_verified = purchase.scalar_one_or_none() is not None
 
         review = AgentReview(
             agent_id=agent_id,
-            user_id=user_id,
+            user_email=user_email,
             rating=data.rating,
             title=data.title,
             content=data.content,
@@ -426,13 +426,13 @@ class MarketplaceService:
     async def get_user_review(
         self,
         agent_id: str,
-        user_id: str,
+        user_email: str,
     ) -> Optional[AgentReview]:
         """Get user's review for an agent."""
         result = await self.db.execute(
             select(AgentReview).where(
                 AgentReview.agent_id == agent_id,
-                AgentReview.user_id == user_id,
+                AgentReview.user_email == user_email,
             )
         )
         return result.scalar_one_or_none()
@@ -466,7 +466,7 @@ class MarketplaceService:
     async def purchase_agent(
         self,
         agent_id: str,
-        user_id: str,
+        user_email: str,
         data: PurchaseCreate,
     ) -> AgentPurchase:
         """Purchase or subscribe to an agent."""
@@ -483,7 +483,7 @@ class MarketplaceService:
             existing = await self.db.execute(
                 select(AgentPurchase).where(
                     AgentPurchase.agent_id == agent_id,
-                    AgentPurchase.user_id == user_id,
+                    AgentPurchase.user_email == user_email,
                 )
             )
             if existing.scalar_one_or_none():
@@ -491,7 +491,7 @@ class MarketplaceService:
 
         purchase = AgentPurchase(
             agent_id=agent_id,
-            user_id=user_id,
+            user_email=user_email,
             pricing_type=agent.pricing_type,
             amount_paid=agent.price or Decimal(0),
             currency=agent.currency,
@@ -508,12 +508,12 @@ class MarketplaceService:
         await self.db.flush()
         await self.db.refresh(purchase)
 
-        logger.info(f"User {user_id} purchased agent {agent_id}")
+        logger.info(f"User {user_email} purchased agent {agent_id}")
         return purchase
 
     async def get_user_purchases(
         self,
-        user_id: str,
+        user_email: str,
         skip: int = 0,
         limit: int = 20,
     ) -> tuple[list[AgentPurchase], int]:
@@ -521,7 +521,7 @@ class MarketplaceService:
         query = (
             select(AgentPurchase)
             .options(selectinload(AgentPurchase.agent))
-            .where(AgentPurchase.user_id == user_id)
+            .where(AgentPurchase.user_email == user_email)
             .order_by(AgentPurchase.created_at.desc())
         )
 
@@ -537,13 +537,13 @@ class MarketplaceService:
     async def check_purchase(
         self,
         agent_id: str,
-        user_id: str,
+        user_email: str,
     ) -> Optional[AgentPurchase]:
         """Check if user has purchased an agent."""
         result = await self.db.execute(
             select(AgentPurchase).where(
                 AgentPurchase.agent_id == agent_id,
-                AgentPurchase.user_id == user_id,
+                AgentPurchase.user_email == user_email,
                 AgentPurchase.is_active == True,
             )
         )
@@ -552,11 +552,11 @@ class MarketplaceService:
     async def get_agent_stats(
         self,
         agent_id: str,
-        creator_id: str,
+        creator_email: str,
     ) -> dict[str, Any]:
         """Get statistics for an agent (creator only)."""
         agent = await self.get_agent_by_id(agent_id)
-        if not agent or agent.creator_id != creator_id:
+        if not agent or agent.creator_email != creator_email:
             raise MarketplaceServiceError("Agent not found or access denied")
 
         # Get purchase stats

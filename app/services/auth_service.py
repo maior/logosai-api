@@ -1,9 +1,12 @@
 """Authentication service for handling login logic."""
 
+import logging
 import httpx
 from typing import Optional
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 from app.core.security import create_access_token, create_refresh_token, verify_token
 from app.schemas.auth import TokenResponse
 from app.schemas.user import UserResponse
@@ -42,22 +45,30 @@ class AuthService:
             GoogleTokenInfo if valid, None otherwise
         """
         try:
+            logger.info(f"Verifying Google token (length: {len(credential)})")
+
             # Verify token with Google
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"https://oauth2.googleapis.com/tokeninfo?id_token={credential}"
                 )
 
+                logger.info(f"Google API response status: {response.status_code}")
+
                 if response.status_code != 200:
+                    logger.error(f"Google API error: {response.text}")
                     return None
 
                 data = response.json()
+                logger.info(f"Google API data: email={data.get('email')}, aud={data.get('aud')[:30] if data.get('aud') else 'N/A'}...")
 
                 # Verify audience (client ID)
                 if data.get("aud") != settings.google_client_id:
+                    logger.warning(f"Audience mismatch: got {data.get('aud')}, expected {settings.google_client_id}")
                     # In development, allow any audience
                     if settings.environment != "development":
                         return None
+                    logger.info("Development mode: allowing audience mismatch")
 
                 return GoogleTokenInfo(
                     sub=data["sub"],
@@ -66,7 +77,8 @@ class AuthService:
                     picture=data.get("picture"),
                     email_verified=data.get("email_verified", False),
                 )
-        except Exception:
+        except Exception as e:
+            logger.exception(f"Error verifying Google token: {e}")
             return None
 
     @staticmethod

@@ -126,14 +126,24 @@ class ChatService:
         )
         await self.db.commit()
 
-        # Emit initial event
+        # Emit initial events (website-compatible)
+        yield {
+            "event": "initialization",  # Website compatible
+            "data": {
+                "message": "시스템 초기화 중...",
+                "stage": "initialization",
+                "session_id": session.id,
+                "progress": 5,
+            },
+        }
+
         yield {
             "event": "ontology_init",
             "data": {
                 "message": "온톨로지 시스템으로 쿼리 분석 중...",
                 "stage": "ontology_initialization",
                 "session_id": session.id,
-                "progress": 5,
+                "progress": 10,
             },
         }
 
@@ -198,35 +208,83 @@ class ChatService:
         Fallback streaming when ACP server is not available.
 
         This provides a graceful degradation with simulated events.
+        Events are website-compatible.
         """
         import asyncio
 
-        # Simulate processing stages
+        # Agent discovery event (website compatible)
+        yield {
+            "event": "agent_discovery",
+            "data": {
+                "message": "사용 가능한 에이전트 검색 중...",
+                "progress": 15,
+            },
+        }
+        await asyncio.sleep(0.05)
+
+        # Agents found/selected event
         yield {
             "event": "agents_selected",
             "data": {
                 "message": "에이전트 선택 완료",
                 "agents": [
-                    {"id": "fallback-agent", "name": "Fallback Agent"},
+                    {
+                        "id": "fallback-agent",
+                        "name": "Fallback Agent",
+                        "type": "fallback",
+                        "status": "ready",
+                        "description": "ACP 서버 미연결 시 대체 에이전트",
+                    },
                 ],
+                "progress": 25,
+            },
+        }
+        await asyncio.sleep(0.05)
+
+        # System selection event
+        yield {
+            "event": "system_selected",
+            "data": {
+                "message": "시스템 선택 완료",
+                "system_type": "FALLBACK",
                 "progress": 30,
             },
         }
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
 
         yield {
             "event": "workflow_plan_created",
             "data": {
                 "message": "워크플로우 계획 생성됨",
                 "plan": {
+                    "visualization": "",
                     "steps": [
-                        {"agent": "Fallback Agent", "task": "응답 생성"},
+                        {
+                            "step_id": "step-1",
+                            "agent_id": "fallback-agent",
+                            "description": "응답 생성",
+                            "depends_on": [],
+                        },
                     ],
+                    "execution_order": ["step-1"],
+                    "reasoning": "ACP 서버 미연결로 대체 응답 생성",
+                    "estimated_time": 1,
                 },
+                "progress": 40,
+            },
+        }
+        await asyncio.sleep(0.05)
+
+        # Step executing event (website compatible)
+        yield {
+            "event": "step_executing",
+            "data": {
+                "message": "에이전트 실행 중...",
+                "step_id": "step-1",
+                "agent_id": "fallback-agent",
                 "progress": 50,
             },
         }
-        await asyncio.sleep(0.1)
 
         yield {
             "event": "agent_started",
@@ -234,17 +292,46 @@ class ChatService:
                 "agent_id": "fallback-agent",
                 "agent_name": "Fallback Agent",
                 "task": "응답 생성",
-                "progress": 60,
+                "progress": 55,
             },
         }
         await asyncio.sleep(0.1)
 
-        # Generate fallback response
+        # Content delta events (website compatible - streaming text)
         fallback_content = (
             f"ACP 서버에 연결할 수 없어 대체 응답을 제공합니다.\n\n"
             f"질문: {query}\n\n"
             f"ACP 서버가 다시 시작되면 완전한 에이전트 기반 응답을 받을 수 있습니다."
         )
+
+        # Simulate content streaming
+        words = fallback_content.split()
+        accumulated = ""
+        for i, word in enumerate(words):
+            accumulated += word + " "
+            if i % 5 == 0:  # Send every 5 words
+                yield {
+                    "event": "content_delta",
+                    "data": {
+                        "delta": word + " ",
+                        "accumulated_text": accumulated.strip(),
+                        "progress": 60 + int((i / len(words)) * 20),
+                    },
+                }
+                await asyncio.sleep(0.02)
+
+        # Step completed event
+        yield {
+            "event": "step_completed",
+            "data": {
+                "step_id": "step-1",
+                "agent_id": "fallback-agent",
+                "agent_name": "Fallback Agent",
+                "completed_count": 1,
+                "total_count": 1,
+                "progress": 85,
+            },
+        }
 
         yield {
             "event": "agent_completed",
@@ -256,6 +343,16 @@ class ChatService:
             },
         }
 
+        # Integration started event
+        yield {
+            "event": "integration_started",
+            "data": {
+                "message": "결과 통합 중...",
+                "progress": 92,
+            },
+        }
+        await asyncio.sleep(0.05)
+
         # Save the fallback response
         message = await self._save_message(
             session=session,
@@ -265,13 +362,63 @@ class ChatService:
         )
         await self.db.commit()
 
+        # Final result with all website-expected fields
         yield {
             "event": "final_result",
             "data": {
+                # Website-compatible format (ChatResponse.data)
+                "result": fallback_content,
+                "usage_id": message.id,
+                "reasoning": "ACP 서버 미연결로 인한 대체 응답",
+                "category": "fallback",
+                "references": [],
+                "pdf_names": [],
+                "image_results": {},
+                "graph_data": None,
+                "knowledge_graph_visualization": None,
+                "evaluation_data": None,
+                "rl_metrics": None,
+                "shopping_results": None,
+                "pdf_info": [],
+                "ontology_insights": None,
+                "execution_stats": {
+                    "total_time": 0.5,
+                    "agent_count": 1,
+                },
+                "execution_plan": {
+                    "steps": ["fallback-agent"],
+                },
+                "agent_info": {
+                    "fallback-agent": {
+                        "name": "Fallback Agent",
+                        "type": "fallback",
+                    },
+                },
+                "agent_results": [{
+                    "agent_id": "fallback-agent",
+                    "agent_name": "Fallback Agent",
+                    "step_id": "step-1",
+                    "result": fallback_content,
+                    "execution_time": 0.5,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 0.5,
+                    "hasArtifacts": False,
+                    "agentType": "fallback",
+                }],
+                # Legacy fields for backward compatibility
                 "message_id": message.id,
                 "session_id": session.id,
                 "content": fallback_content,
                 "agent_type": "fallback",
+                "progress": 100,
+            },
+        }
+
+        # Completion event (website compatible alias)
+        yield {
+            "event": "completion",
+            "data": {
+                "message": "처리 완료",
                 "progress": 100,
             },
         }

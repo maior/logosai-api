@@ -33,7 +33,7 @@ async def list_projects(
     """
     service = ProjectService(db)
     projects, total = await service.list_by_owner(
-        owner_id=current_user.id,
+        owner_email=current_user.email,
         include_archived=include_archived,
         skip=skip,
         limit=limit,
@@ -58,7 +58,7 @@ async def create_project(
     """
     service = ProjectService(db)
     project = await service.create(
-        owner_id=current_user.id,
+        owner_email=current_user.email,
         project_data=project_data,
     )
     await db.commit()
@@ -80,7 +80,7 @@ async def get_project(
     service = ProjectService(db)
     project = await service.get_by_id_and_owner(
         project_id=project_id,
-        owner_id=current_user.id,
+        owner_email=current_user.email,
     )
 
     if not project:
@@ -107,7 +107,7 @@ async def update_project(
     service = ProjectService(db)
     project = await service.get_by_id_and_owner(
         project_id=project_id,
-        owner_id=current_user.id,
+        owner_email=current_user.email,
     )
 
     if not project:
@@ -136,7 +136,7 @@ async def delete_project(
     service = ProjectService(db)
     project = await service.get_by_id_and_owner(
         project_id=project_id,
-        owner_id=current_user.id,
+        owner_email=current_user.email,
     )
 
     if not project:
@@ -163,7 +163,7 @@ async def archive_project(
     service = ProjectService(db)
     project = await service.get_by_id_and_owner(
         project_id=project_id,
-        owner_id=current_user.id,
+        owner_email=current_user.email,
     )
 
     if not project:
@@ -192,7 +192,7 @@ async def unarchive_project(
     service = ProjectService(db)
     project = await service.get_by_id_and_owner(
         project_id=project_id,
-        owner_id=current_user.id,
+        owner_email=current_user.email,
     )
 
     if not project:

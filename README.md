@@ -233,6 +233,61 @@ eventSource.addEventListener('error', (e) => {
 });
 ```
 
+## 데이터베이스 스키마
+
+### User 테이블 (logosai.users)
+
+> **중요**: `logos_server`와의 호환성을 위해 `email`을 기본 키로 사용합니다 (UUID `id` 아님).
+
+```sql
+-- logosai.users 테이블 스키마
+CREATE TABLE logosai.users (
+    email VARCHAR(255) PRIMARY KEY,  -- email이 PK
+    name VARCHAR(255) NOT NULL,
+    picture_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    is_active BOOLEAN DEFAULT TRUE,
+    subscription_type VARCHAR(50) DEFAULT 'free',
+    updated_at TIMESTAMP WITHOUT TIME ZONE,
+    order_id VARCHAR(255)
+);
+```
+
+### 외래 키 참조
+
+모든 테이블에서 사용자 참조 시 `email`을 사용합니다:
+
+```python
+# Project 모델 예시
+owner_email: Mapped[str] = mapped_column(
+    String(255),
+    ForeignKey("logosai.users.email", ondelete="CASCADE"),
+)
+
+# Session 모델 예시
+user_email: Mapped[str] = mapped_column(
+    String(255),
+    ForeignKey("logosai.users.email", ondelete="CASCADE"),
+)
+```
+
+### 호환성 속성
+
+API 호환성을 위해 각 모델에 `id` 속성이 있습니다:
+
+```python
+# User 모델
+@property
+def id(self) -> str:
+    return self.email  # email을 id로 반환
+
+# Project 모델
+@property
+def owner_id(self) -> str:
+    return self.owner_email  # 호환성 속성
+```
+
 ## 프로젝트 구조
 
 ```
@@ -245,12 +300,12 @@ logos_api/
 │   │   ├── exceptions.py    # 커스텀 예외
 │   │   └── security.py      # JWT 인증
 │   ├── models/              # SQLAlchemy 모델
-│   │   ├── user.py
-│   │   ├── project.py
-│   │   ├── session.py
+│   │   ├── user.py          # User, UserHistory, SubscriptionPlan
+│   │   ├── project.py       # Project (owner_email FK)
+│   │   ├── session.py       # Session (user_email FK)
 │   │   ├── message.py
 │   │   ├── document.py
-│   │   └── marketplace.py
+│   │   └── marketplace.py   # MarketplaceAgent, AgentReview, AgentPurchase
 │   ├── routers/             # API 라우터
 │   │   ├── auth.py
 │   │   ├── users.py
@@ -275,7 +330,15 @@ logos_api/
 │   │   ├── chat_service.py
 │   │   ├── acp_client.py
 │   │   ├── document_service.py
-│   │   └── marketplace_service.py
+│   │   ├── marketplace_service.py
+│   │   └── rag/             # RAG 서비스
+│   │       ├── rag_service.py
+│   │       ├── elasticsearch_client.py
+│   │       ├── embedding_service.py
+│   │       ├── document_processor.py
+│   │       ├── paper_metadata.py
+│   │       ├── rerank/      # 리랭킹 시스템
+│   │       └── image/       # 이미지 처리
 │   ├── config.py            # 설정
 │   ├── database.py          # DB 연결
 │   └── main.py              # 앱 엔트리포인트

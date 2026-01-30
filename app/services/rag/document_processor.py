@@ -1,4 +1,7 @@
-"""Document processor for chunking and parsing files."""
+"""Document processor for chunking and parsing files.
+
+Enhanced with paper metadata extraction and image processing support.
+"""
 
 import logging
 import os
@@ -12,6 +15,10 @@ from langchain_core.documents import Document as LangchainDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.config import settings
+from app.services.rag.paper_metadata import (
+    extract_paper_metadata,
+    extract_abstract,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -161,25 +168,118 @@ class DocumentProcessor:
             logger.error(f"Failed to load {file_path}: {e}")
             raise
 
-    async def _load_pdf(self, file_path: str) -> list[LangchainDocument]:
-        """Load PDF document using PyMuPDF."""
+    async def _load_pdf(
+        self,
+        file_path: str,
+        extract_metadata: bool = True,
+    ) -> list[LangchainDocument]:
+        """
+        Load PDF document using PyMuPDF with paper metadata extraction.
+
+        Args:
+            file_path: Path to PDF file
+            extract_metadata: Whether to extract paper metadata from first page
+
+        Returns:
+            List of LangChain documents with content and metadata
+        """
         import fitz  # PyMuPDF
 
         documents = []
+        paper_metadata = {}
         doc = fitz.open(file_path)
 
         for page_num, page in enumerate(doc):
             text = page.get_text()
-            if text.strip():
-                documents.append(
-                    LangchainDocument(
-                        page_content=text,
-                        metadata={"page": page_num, "source": file_path},
-                    )
+            if not text.strip():
+                continue
+
+            # Extract paper metadata from first page
+            if page_num == 0 and extract_metadata:
+                paper_metadata = extract_paper_metadata(text)
+                abstract = extract_abstract(text)
+                if abstract:
+                    paper_metadata["abstract"] = abstract
+                    # Prepend abstract to first page
+                    text = f"{abstract}\n\n{text}"
+
+            documents.append(
+                LangchainDocument(
+                    page_content=text,
+                    metadata={
+                        "page": page_num,
+                        "source": file_path,
+                        **paper_metadata,
+                    },
                 )
+            )
 
         doc.close()
         return documents
+
+    async def process_pdf_with_images(
+        self,
+        file_path: str,
+        file_name: str,
+        user_id: str,
+        document_id: str,
+        project_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """
+        Process PDF including image extraction.
+
+        Args:
+            file_path: Path to the PDF file
+            file_name: Original file name
+            user_id: Owner user ID
+            document_id: Document ID
+            project_id: Optional project ID
+
+        Returns:
+            Processing statistics including image count
+        """
+        try:
+            # Process text chunks
+            chunks = await self.process_file(
+                file_path=file_path,
+                file_name=file_name,
+                user_id=user_id,
+                document_id=document_id,
+                project_id=project_id,
+            )
+
+            stats = self.get_chunk_stats(chunks)
+
+            # Process images
+            try:
+                from app.services.rag.image.processor import ImageProcessor
+
+                image_processor = ImageProcessor()
+                image_stats = await image_processor.process_pdf_images(
+                    pdf_path=file_path,
+                    user_email=user_id,
+                    file_name=file_name,
+                    project_id=project_id or "",
+                )
+                stats["images_found"] = image_stats.get("images_found", 0)
+                stats["images_indexed"] = image_stats.get("images_indexed", 0)
+            except ImportError:
+                logger.warning("Image processor dependencies not available")
+                stats["images_found"] = 0
+                stats["images_indexed"] = 0
+            except Exception as e:
+                logger.warning(f"Image processing failed: {e}")
+                stats["images_found"] = 0
+                stats["images_indexed"] = 0
+
+            return {
+                "chunks": chunks,
+                "stats": stats,
+            }
+
+        except Exception as e:
+            logger.error(f"PDF processing error: {e}")
+            raise
 
     async def _load_text(self, file_path: str) -> list[LangchainDocument]:
         """Load text or markdown file."""

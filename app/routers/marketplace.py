@@ -116,7 +116,7 @@ async def create_agent(
 
     try:
         agent = await service.create_agent(
-            creator_id=current_user.id,
+            creator_email=current_user.email,
             data=data,
         )
         await db.commit()
@@ -156,7 +156,7 @@ async def get_my_agents(
 
     skip = (page - 1) * page_size
     agents, total = await service.get_user_agents(
-        user_id=current_user.id,
+        user_email=current_user.email,
         status=agent_status,
         skip=skip,
         limit=page_size,
@@ -195,7 +195,7 @@ async def get_agent(
     # Check if user has purchased
     is_purchased = False
     if current_user:
-        purchase = await service.check_purchase(agent_id, current_user.id)
+        purchase = await service.check_purchase(agent_id, current_user.email)
         is_purchased = purchase is not None
 
     response = AgentDetailResponse.model_validate(agent)
@@ -227,7 +227,7 @@ async def update_agent(
             detail="Agent not found",
         )
 
-    if agent.creator_id != current_user.id:
+    if agent.creator_email != current_user.email:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to update this agent",
@@ -264,7 +264,7 @@ async def delete_agent(
             detail="Agent not found",
         )
 
-    if agent.creator_id != current_user.id:
+    if agent.creator_email != current_user.email:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this agent",
@@ -294,7 +294,7 @@ async def publish_agent(
             detail="Agent not found",
         )
 
-    if agent.creator_id != current_user.id:
+    if agent.creator_email != current_user.email:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to publish this agent",
@@ -331,7 +331,7 @@ async def unpublish_agent(
             detail="Agent not found",
         )
 
-    if agent.creator_id != current_user.id:
+    if agent.creator_email != current_user.email:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to unpublish this agent",
@@ -362,7 +362,7 @@ async def get_agent_stats(
     service = MarketplaceService(db)
 
     try:
-        stats = await service.get_agent_stats(agent_id, current_user.id)
+        stats = await service.get_agent_stats(agent_id, current_user.email)
         return AgentStatsResponse(**stats)
     except MarketplaceServiceError as e:
         raise HTTPException(
@@ -439,7 +439,7 @@ async def create_review(
     try:
         review = await service.create_review(
             agent_id=agent_id,
-            user_id=current_user.id,
+            user_email=current_user.email,
             data=data,
         )
         await db.commit()
@@ -465,7 +465,7 @@ async def update_my_review(
     """
     service = MarketplaceService(db)
 
-    review = await service.get_user_review(agent_id, current_user.id)
+    review = await service.get_user_review(agent_id, current_user.email)
     if not review:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -490,7 +490,7 @@ async def delete_my_review(
     """
     service = MarketplaceService(db)
 
-    review = await service.get_user_review(agent_id, current_user.id)
+    review = await service.get_user_review(agent_id, current_user.email)
     if not review:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -521,7 +521,7 @@ async def purchase_agent(
     try:
         purchase = await service.purchase_agent(
             agent_id=agent_id,
-            user_id=current_user.id,
+            user_email=current_user.email,
             data=data,
         )
         await db.commit()
@@ -549,7 +549,7 @@ async def get_my_purchases(
 
     skip = (page - 1) * page_size
     purchases, total = await service.get_user_purchases(
-        user_id=current_user.id,
+        user_email=current_user.email,
         skip=skip,
         limit=page_size,
     )

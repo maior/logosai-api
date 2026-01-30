@@ -123,54 +123,71 @@ logos_server/
 
 ### 3.1 Core Tables
 
+> **중요**: `logosai.users` 테이블은 `email`을 기본 키로 사용합니다 (UUID `id` 아님).
+
 ```sql
--- Users
+-- Users (logosai.users) - email이 PK!
 users (
-    id, email, name, picture_url,
+    email VARCHAR(255) PRIMARY KEY,  -- email이 기본 키
+    name VARCHAR(255) NOT NULL,
+    picture_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE,
+    last_login_at TIMESTAMP WITH TIME ZONE,
+    is_active BOOLEAN DEFAULT TRUE,
+    subscription_type VARCHAR(50) DEFAULT 'free',
+    updated_at TIMESTAMP WITHOUT TIME ZONE,
+    order_id VARCHAR(255)
+)
+
+-- User History (logosai.user_history)
+user_history (
+    id SERIAL PRIMARY KEY,
+    user_email VARCHAR(255) NOT NULL,  -- email 참조
+    access_type VARCHAR(50) NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE
+)
+
+-- Subscription Plans (logosai.subscription_plans)
+subscription_plans (
+    plan_id VARCHAR(50) PRIMARY KEY,
+    max_files INTEGER DEFAULT 10,
+    monthly_search_limit INTEGER DEFAULT 100,
+    storage_limit INTEGER DEFAULT 1024
+)
+
+-- Projects (새 테이블 - logos_api 전용)
+projects (
+    id UUID PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    owner_email VARCHAR(255) REFERENCES logosai.users(email),  -- email FK
+    is_public BOOLEAN DEFAULT FALSE,
+    is_archived BOOLEAN DEFAULT FALSE,
+    color VARCHAR(7),
+    icon VARCHAR(50),
     created_at, updated_at
 )
 
--- Subscriptions
-user_subscriptions (
-    id, user_id, plan_type, status,
-    subscription_id, order_id,
-    payment_provider, start_date, end_date
-)
-
--- API Keys
-user_api_keys (
-    id, user_id, provider, api_key_encrypted,
-    model_name, project_id
-)
-
--- Projects
-projects (
-    id, user_id, name, description,
-    is_public, created_at
-)
-
--- Project Shares
-project_shares (
-    id, project_id, shared_user_id,
-    share_type, status
-)
-
--- Sessions
+-- Sessions (새 테이블 - logos_api 전용)
 sessions (
-    id, project_id, user_id, title,
-    created_at, last_modified
+    id UUID PRIMARY KEY,
+    title VARCHAR(500),
+    user_email VARCHAR(255) REFERENCES logosai.users(email),  -- email FK
+    project_id UUID REFERENCES projects(id),
+    summary TEXT,
+    message_count INTEGER DEFAULT 0,
+    created_at, updated_at, last_message_at
 )
 
 -- Messages
 messages (
-    id, session_id, role, content,
-    metadata, created_at
-)
-
--- Memories
-memories (
-    id, user_id, project_id, content,
-    embedding, created_at
+    id UUID PRIMARY KEY,
+    session_id UUID REFERENCES sessions(id),
+    role VARCHAR(50) NOT NULL,  -- user, assistant, system
+    content TEXT NOT NULL,
+    extra_data JSONB,
+    created_at
 )
 ```
 

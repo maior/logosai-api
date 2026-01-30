@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>logos_api Google Login Test</title>
+    <script src="https://accounts.google.com/gsi/client" async></script>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; margin-bottom: 10px; }
+        .subtitle { color: #666; margin-bottom: 30px; }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 8px;
+        }
+        .section h3 { margin-top: 0; color: #444; }
+        #status {
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-weight: 500;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #cce5ff; color: #004085; }
+        .pending { background: #fff3cd; color: #856404; }
+        pre {
+            background: #1e1e1e;
+            color: #9cdcfe;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            margin: 5px;
+        }
+        .btn-primary { background: #4285f4; color: white; }
+        .btn-primary:hover { background: #3367d6; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover { background: #c82333; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-secondary:hover { background: #5a6268; }
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: #e8f5e9;
+            border-radius: 8px;
+        }
+        .user-info img {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 logos_api Google Login Test</h1>
+        <p class="subtitle">FastAPI 마이그레이션 - 구글 OAuth 테스트</p>
+
+        <div id="status" class="pending">⏳ Google Sign-In 초기화 중...</div>
+
+        <div class="section">
+            <h3>1️⃣ 구글 로그인</h3>
+            <div id="g_id_onload"
+                data-client_id="582689749693-4u000n1u867q0rqskss0sdaaru5ct70s.apps.googleusercontent.com"
+                data-context="signin"
+                data-ux_mode="popup"
+                data-callback="handleCredentialResponse"
+                data-auto_prompt="false">
+            </div>
+            <div class="g_id_signin"
+                data-type="standard"
+                data-shape="rectangular"
+                data-theme="outline"
+                data-text="signin_with"
+                data-size="large"
+                data-logo_alignment="left">
+            </div>
+        </div>
+
+        <div id="user-section" class="section hidden">
+            <h3>2️⃣ 로그인 성공</h3>
+            <div id="user-info" class="user-info"></div>
+            <div style="margin-top: 15px;">
+                <button class="btn btn-secondary" onclick="testRefreshToken()">🔄 토큰 갱신 테스트</button>
+                <button class="btn btn-danger" onclick="logout()">🚪 로그아웃</button>
+            </div>
+        </div>
+
+        <div id="tokens-section" class="section hidden">
+            <h3>3️⃣ JWT 토큰 정보</h3>
+            <pre id="tokens-info"></pre>
+        </div>
+
+        <div id="api-test-section" class="section hidden">
+            <h3>4️⃣ API 테스트</h3>
+            <button class="btn btn-primary" onclick="testProtectedEndpoint()">🔒 인증 필요 API 테스트</button>
+            <button class="btn btn-primary" onclick="testHealthEndpoint()">💚 Health Check</button>
+            <pre id="api-result" style="margin-top: 15px;"></pre>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8100';
+        let currentTokens = null;
+        let currentUser = null;
+
+        function updateStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = type;
+        }
+
+        function handleCredentialResponse(response) {
+            console.log('Google credential received:', response.credential.substring(0, 50) + '...');
+            updateStatus('🔄 서버에 로그인 요청 중...', 'pending');
+
+            // Call logos_api login endpoint
+            fetch(`${API_URL}/api/v1/auth/login/google`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    credential: response.credential
+                })
+            })
+            .then(res => {
+                if (!res.ok) {
+                    return res.json().then(err => { throw err; });
+                }
+                return res.json();
+            })
+            .then(data => {
+                console.log('Login success:', data);
+                currentTokens = data.tokens;
+                currentUser = data.user;
+
+                updateStatus('✅ 로그인 성공!', 'success');
+                showUserInfo(data);
+            })
+            .catch(error => {
+                console.error('Login error:', error);
+                updateStatus(`❌ 로그인 실패: ${error.detail || error.message || JSON.stringify(error)}`, 'error');
+            });
+        }
+
+        function showUserInfo(data) {
+            const userSection = document.getElementById('user-section');
+            const tokensSection = document.getElementById('tokens-section');
+            const apiTestSection = document.getElementById('api-test-section');
+
+            userSection.classList.remove('hidden');
+            tokensSection.classList.remove('hidden');
+            apiTestSection.classList.remove('hidden');
+
+            // User info
+            const userInfo = document.getElementById('user-info');
+            userInfo.innerHTML = `
+                ${data.user.picture_url ? `<img src="${data.user.picture_url}" alt="Profile">` : ''}
+                <div>
+                    <strong>${data.user.name}</strong><br>
+                    <span style="color: #666;">${data.user.email}</span><br>
+                    <small style="color: #999;">ID: ${data.user.id}</small>
+                </div>
+            `;
+
+            // Tokens info
+            document.getElementById('tokens-info').textContent = JSON.stringify({
+                access_token: data.tokens.access_token.substring(0, 50) + '...',
+                refresh_token: data.tokens.refresh_token.substring(0, 50) + '...',
+                token_type: data.tokens.token_type,
+                expires_in: data.tokens.expires_in + ' seconds'
+            }, null, 2);
+        }
+
+        function testRefreshToken() {
+            if (!currentTokens) {
+                alert('먼저 로그인하세요.');
+                return;
+            }
+
+            updateStatus('🔄 토큰 갱신 중...', 'pending');
+
+            fetch(`${API_URL}/api/v1/auth/refresh`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    refresh_token: currentTokens.refresh_token
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.access_token) {
+                    currentTokens.access_token = data.access_token;
+                    updateStatus('✅ 토큰 갱신 성공!', 'success');
+                    document.getElementById('api-result').textContent = JSON.stringify(data, null, 2);
+                } else {
+                    updateStatus('❌ 토큰 갱신 실패', 'error');
+                    document.getElementById('api-result').textContent = JSON.stringify(data, null, 2);
+                }
+            })
+            .catch(error => {
+                updateStatus(`❌ 토큰 갱신 실패: ${error.message}`, 'error');
+            });
+        }
+
+        function testProtectedEndpoint() {
+            if (!currentTokens) {
+                alert('먼저 로그인하세요.');
+                return;
+            }
+
+            fetch(`${API_URL}/api/v1/users/me`, {
+                headers: {
+                    'Authorization': `Bearer ${currentTokens.access_token}`
+                }
+            })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('api-result').textContent = JSON.stringify(data, null, 2);
+                updateStatus('✅ API 호출 성공!', 'success');
+            })
+            .catch(error => {
+                document.getElementById('api-result').textContent = `Error: ${error.message}`;
+                updateStatus('❌ API 호출 실패', 'error');
+            });
+        }
+
+        function testHealthEndpoint() {
+            fetch(`${API_URL}/health`)
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('api-result').textContent = JSON.stringify(data, null, 2);
+            })
+            .catch(error => {
+                document.getElementById('api-result').textContent = `Error: ${error.message}`;
+            });
+        }
+
+        function logout() {
+            fetch(`${API_URL}/api/v1/auth/logout`, {
+                method: 'POST'
+            })
+            .then(() => {
+                currentTokens = null;
+                currentUser = null;
+                document.getElementById('user-section').classList.add('hidden');
+                document.getElementById('tokens-section').classList.add('hidden');
+                document.getElementById('api-test-section').classList.add('hidden');
+                updateStatus('👋 로그아웃 완료. 다시 로그인하세요.', 'info');
+            });
+        }
+
+        // Initialize
+        window.onload = function() {
+            updateStatus('✅ Google Sign-In 준비 완료. 위 버튼으로 로그인하세요.', 'info');
+        };
+    </script>
+</body>
+</html>

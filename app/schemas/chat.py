@@ -95,12 +95,41 @@ class AgentCompletedEvent(BaseStreamEvent):
     progress: int
 
 
+class AgentResult(BaseModel):
+    """Individual agent result for website compatibility."""
+    agent_id: str
+    agent_name: str
+    step_id: str
+    result: Any
+    execution_time: float
+    timestamp: str
+    confidence: Optional[float] = None
+    hasArtifacts: Optional[bool] = False
+    agentType: Optional[str] = None
+
+
 class FinalResultEvent(BaseStreamEvent):
-    """Final result event."""
+    """Final result event - Website compatible format."""
     event: str = "final_result"
-    message_id: str
-    session_id: str
-    content: str
+
+    # Website-expected fields (primary)
+    result: str  # Main response text
+    usage_id: str  # Unique request ID
+    reasoning: Optional[str] = None  # LLM reasoning
+    category: Optional[str] = None  # Query classification
+    references: Optional[list[str]] = None  # Document references
+    pdf_names: Optional[list[str]] = None  # PDF filenames
+    image_results: Optional[dict[str, Any]] = None  # Image search results
+    agent_results: Optional[list[AgentResult]] = None  # Per-agent results
+    graph_data: Optional[Any] = None  # Chart/graph data
+    knowledge_graph_visualization: Optional[Any] = None  # Knowledge graph
+    shopping_results: Optional[Any] = None  # Shopping search results
+    pdf_info: Optional[list[Any]] = None  # PDF metadata
+
+    # Legacy fields for backward compatibility
+    message_id: Optional[str] = None
+    session_id: Optional[str] = None
+    content: Optional[str] = None  # Alias for result
     agent_type: Optional[str] = None
     tokens_used: Optional[int] = None
     progress: int = 100
@@ -112,3 +141,28 @@ class ErrorEvent(BaseStreamEvent):
     error_code: str
     message: str
     details: Optional[dict[str, Any]] = None
+
+
+# Website-compatible API Response wrapper
+class APIResponse(BaseModel):
+    """Standard API response wrapper for website compatibility."""
+    msg: str = "success"
+    code: int = 0
+    data: dict[str, Any]
+
+
+class SearchResult(BaseModel):
+    """Document search result."""
+    file_id: str
+    file_name: str
+    content: str
+    page: Optional[int] = None
+    score: float
+    metadata: Optional[dict[str, Any]] = None
+
+
+class DocumentSearchResponse(BaseModel):
+    """Document search response in website-compatible format."""
+    msg: str = "success"
+    code: int = 0
+    data: dict[str, Any]

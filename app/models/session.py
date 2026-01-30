@@ -12,7 +12,12 @@ from app.database import Base
 
 
 class Session(Base):
-    """Session model for chat conversations."""
+    """Session model for chat conversations.
+
+    Note: This table doesn't exist in logos_server (logosai schema).
+    It's a new table for logos_api.
+    Uses user_email to reference logosai.users.email.
+    """
 
     __tablename__ = "sessions"
 
@@ -23,10 +28,10 @@ class Session(Base):
     )
     title: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
-    # Foreign keys
-    user_id: Mapped[str] = mapped_column(
-        UUID(as_uuid=False),
-        ForeignKey("users.id", ondelete="CASCADE"),
+    # Foreign keys - uses email to reference users (logos_server uses email as primary key)
+    user_email: Mapped[str] = mapped_column(
+        String(255),
+        ForeignKey("logosai.users.email", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -59,8 +64,14 @@ class Session(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship("User", back_populates="sessions")
+    user: Mapped["User"] = relationship("User", back_populates="sessions", foreign_keys=[user_email])
     project: Mapped[Optional["Project"]] = relationship("Project", back_populates="sessions")
+
+    # Compatibility property
+    @property
+    def user_id(self) -> str:
+        """Return user_email for compatibility."""
+        return self.user_email
     messages: Mapped[list["Message"]] = relationship(
         "Message",
         back_populates="session",
