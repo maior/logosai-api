@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Text, func
+from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,6 +23,7 @@ class Message(Base):
     """Message model for chat messages."""
 
     __tablename__ = "messages"
+    __table_args__ = {"schema": "logosai"}
 
     id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
@@ -30,17 +31,17 @@ class Message(Base):
         default=lambda: str(uuid4()),
     )
 
-    # Foreign key
+    # Foreign key - references logosai.sessions
     session_id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
-        ForeignKey("sessions.id", ondelete="CASCADE"),
+        ForeignKey("logosai.sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
-    # Content
-    role: Mapped[MessageRole] = mapped_column(
-        Enum(MessageRole),
+    # Content - using String instead of Enum for PostgreSQL compatibility
+    role: Mapped[str] = mapped_column(
+        String(50),
         nullable=False,
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)

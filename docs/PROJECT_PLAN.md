@@ -359,6 +359,92 @@ async def stream_chat():
 
 ---
 
+## ACP 서버 통합 완료 (2026-01-30) ✅
+
+### 통합 작업 내용
+
+#### 1. ACP 클라이언트 수정 (`app/services/acp_client.py`)
+- 엔드포인트: `/stream/multi` (not `/api/v1/stream`)
+- 파라미터: `sessionid` (not `session_id`)
+- Health check: `/stream/multi` POST 요청으로 확인
+
+#### 2. 메시지 모델 수정 (`app/models/message.py`)
+- `role` 필드: `Enum(MessageRole)` → `String(50)` (PostgreSQL 호환)
+- `__table_args__`: `{"schema": "logosai"}` 추가
+
+#### 3. 채팅 서비스 수정 (`app/services/chat_service.py`)
+- `final_result` 이벤트 파싱 수정 (3중 중첩 구조 처리)
+- Assistant 메시지 저장 로직 추가
+- `role.value` 변환 추가 (enum → string)
+
+### 검증된 전체 플로우
+
+```
+1. JWT 인증 ✅
+2. 사용자 조회 (logosai.users) ✅
+3. 세션 생성 (logosai.sessions) ✅
+4. 사용자 메시지 저장 (role: 'user') ✅
+5. ACP 서버 스트리밍 (/stream/multi) ✅
+6. 쿼리 분석 (LLM: gemini-2.5-flash-lite) ✅
+7. 에이전트 선택 (예: calculator_agent) ✅
+8. 에이전트 실행 ✅
+9. 결과 통합 ✅
+10. SSE 이벤트 스트리밍 (15+ 이벤트) ✅
+11. Assistant 메시지 저장 (role: 'assistant', agent_type) ✅
+12. message_saved 이벤트 전송 ✅
+13. 세션/메시지 API 조회 ✅
+```
+
+### 테스트 결과
+
+| 테스트 | 상태 | 비고 |
+|--------|------|------|
+| 계산 쿼리 (`3*4 계산해줘`) | ✅ | calculator_agent 선택, 결과: 12 |
+| 세션 생성 | ✅ | message_count: 2 |
+| 사용자 메시지 저장 | ✅ | role: 'user' |
+| Assistant 메시지 저장 | ✅ | role: 'assistant', agent_type: 'calculator_agent' |
+| 세션 조회 API | ✅ | GET /api/v1/sessions/{id} |
+| 메시지 히스토리 API | ✅ | GET /api/v1/sessions/{id}/messages |
+
+### 테스트 명령어
+
+```bash
+# 서버 시작
+uvicorn app.main:app --reload --port 8090
+
+# ACP 서버 시작 (별도 터미널)
+cd logosai/logosai/examples
+python standalone_acp_server.py --enable-auto-agent-selection
+
+# 전체 플로우 테스트 (curl)
+TOKEN=$(python -c "
+from datetime import datetime, timedelta, timezone
+from jose import jwt
+expire = datetime.now(timezone.utc) + timedelta(hours=24)
+payload = {'sub': 'test@example.com', 'exp': expire, 'type': 'access'}
+print(jwt.encode(payload, 'your-super-secret-key-change-this-in-production', algorithm='HS256'))
+")
+
+curl -X POST "http://localhost:8090/api/v1/chat/stream" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"query": "1+1 계산해줘", "session_id": null, "project_id": null}'
+```
+
+---
+
+## Phase 6: 배포 및 최적화 (진행 예정)
+
+### 남은 작업
+- [ ] Docker Compose 설정 (logos_api + ACP 서버)
+- [ ] CI/CD 파이프라인
+- [ ] 성능 모니터링 (Prometheus/Grafana)
+- [ ] 프론트엔드 완전 전환 테스트
+- [ ] 부하 테스트
+
+---
+
 *작성일: 2026-01-29*
 *최종 업데이트: 2026-01-30*
-*버전: 2.0*
+*버전: 3.0*

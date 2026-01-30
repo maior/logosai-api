@@ -39,11 +39,22 @@ class ACPClient:
             await self._session.close()
 
     async def health_check(self) -> bool:
-        """Check if ACP server is healthy."""
+        """Check if ACP server is healthy.
+
+        ACP server doesn't have a /health endpoint, so we check
+        by making a request to /stream/multi with no query.
+        Server responds with 400 if up but query missing.
+        """
         try:
             session = await self._get_session()
-            async with session.get(f"{self.base_url}/health") as response:
-                return response.status == 200
+            # Try to connect to the streaming endpoint
+            # ACP returns 400 if query is missing (server is up)
+            async with session.get(
+                f"{self.base_url}/stream/multi",
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as response:
+                # 200 with error event or 400 means server is up
+                return response.status in (200, 400)
         except Exception as e:
             logger.error(f"ACP health check failed: {e}")
             return False
@@ -55,6 +66,8 @@ class ACPClient:
         session_id: Optional[str] = None,
         project_id: Optional[str] = None,
         context: Optional[dict[str, Any]] = None,
+        agent_ids: Optional[list[str]] = None,
+        skip_analysis: bool = False,
     ) -> dict[str, Any]:
         """
         Process a query synchronously (non-streaming).
@@ -65,6 +78,8 @@ class ACPClient:
             session_id: Session ID
             project_id: Project ID
             context: Additional context
+            agent_ids: Optional list of agent IDs to use (skips auto-selection)
+            skip_analysis: Skip query analysis if True
 
         Returns:
             Response from ACP server
@@ -74,14 +89,22 @@ class ACPClient:
         payload = {
             "query": query,
             "email": user_email,
-            "session_id": session_id,
+            "sessionid": session_id,  # ACP uses 'sessionid' not 'session_id'
             "project_id": project_id,
             "context": context or {},
         }
 
+        # Add optional agent selection parameters
+        if agent_ids:
+            payload["agent_ids"] = agent_ids
+            payload["skip_analysis"] = True  # Skip analysis when agents specified
+        elif skip_analysis:
+            payload["skip_analysis"] = skip_analysis
+
         try:
+            # ACP server endpoint: /stream (single) or /stream/multi (multi-agent)
             async with session.post(
-                f"{self.base_url}/api/v1/process",
+                f"{self.base_url}/stream/multi",
                 json=payload,
             ) as response:
                 if response.status != 200:
@@ -101,6 +124,8 @@ class ACPClient:
         session_id: Optional[str] = None,
         project_id: Optional[str] = None,
         context: Optional[dict[str, Any]] = None,
+        agent_ids: Optional[list[str]] = None,
+        skip_analysis: bool = False,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Process a query with streaming response.
@@ -111,6 +136,8 @@ class ACPClient:
             session_id: Session ID
             project_id: Project ID
             context: Additional context
+            agent_ids: Optional list of agent IDs to use (skips auto-selection)
+            skip_analysis: Skip query analysis if True
 
         Yields:
             SSE events from ACP server
@@ -120,14 +147,22 @@ class ACPClient:
         payload = {
             "query": query,
             "email": user_email,
-            "session_id": session_id,
+            "sessionid": session_id,  # ACP uses 'sessionid' not 'session_id'
             "project_id": project_id,
             "context": context or {},
         }
 
+        # Add optional agent selection parameters
+        if agent_ids:
+            payload["agent_ids"] = agent_ids
+            payload["skip_analysis"] = True  # Skip analysis when agents specified
+        elif skip_analysis:
+            payload["skip_analysis"] = skip_analysis
+
         try:
+            # ACP server endpoint: /stream/multi for multi-agent streaming
             async with session.post(
-                f"{self.base_url}/api/v1/stream",
+                f"{self.base_url}/stream/multi",
                 json=payload,
                 headers={"Accept": "text/event-stream"},
             ) as response:

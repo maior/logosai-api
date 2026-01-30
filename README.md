@@ -2,12 +2,15 @@
 
 FastAPI 기반의 LogosAI 백엔드 서버입니다. 온톨로지 기반 멀티 에이전트 AI 시스템을 위한 RESTful API를 제공합니다.
 
+> **상태**: ✅ Production Ready (2026-01-30)
+> ACP 서버 통합 완료, 전체 채팅 플로우 검증 완료
+
 ## 주요 기능
 
 - **인증 시스템**: Google OAuth + JWT 토큰 기반 인증
 - **프로젝트 관리**: 프로젝트 CRUD, 아카이브, 공유
 - **세션 관리**: 대화 세션 및 메시지 히스토리
-- **실시간 채팅**: SSE 스트리밍 기반 AI 응답
+- **실시간 채팅**: SSE 스트리밍 기반 AI 응답 ✅ (ACP 서버 통합 완료)
 - **문서 관리**: 파일 업로드 및 RAG 검색
 - **마켓플레이스**: 에이전트 등록/검색/구매
 
@@ -184,52 +187,152 @@ uvicorn app.main:app --host 0.0.0.0 --port 8090 --workers 4
 
 가격 유형: 무료(free), 일회성(one_time), 구독(subscription), 사용량 기반(usage_based)
 
+## ACP 서버 통합 아키텍처
+
+logos_api는 ACP(Agent Communication Protocol) 서버와 통합되어 멀티 에이전트 AI 시스템을 제공합니다.
+
+### 전체 플로우
+
+```
+Frontend (Website)
+    │
+    ▼ POST /api/v1/chat/stream
+┌─────────────────────────────────────────────┐
+│              logos_api (8090)               │
+├─────────────────────────────────────────────┤
+│ 1. JWT 인증 → 사용자 조회                   │
+│ 2. 세션 생성/조회                           │
+│ 3. 사용자 메시지 저장 (role: user)          │
+│ 4. ACP 서버로 스트리밍 요청                 │
+└─────────────────┬───────────────────────────┘
+                  │ SSE Stream
+                  ▼
+┌─────────────────────────────────────────────┐
+│              ACP Server (8888)              │
+├─────────────────────────────────────────────┤
+│ 5. 쿼리 분석 (LLM: gemini-2.5-flash-lite)  │
+│ 6. 에이전트 선택 (자동)                     │
+│ 7. 에이전트 실행                            │
+│ 8. 결과 통합 (LLM)                          │
+│ 9. final_result 이벤트 전송                 │
+└─────────────────┬───────────────────────────┘
+                  │ SSE Events
+                  ▼
+┌─────────────────────────────────────────────┐
+│              logos_api (8090)               │
+├─────────────────────────────────────────────┤
+│ 10. Assistant 메시지 저장 (role: assistant) │
+│ 11. message_saved 이벤트 전송               │
+└─────────────────┬───────────────────────────┘
+                  │ SSE Response
+                  ▼
+Frontend (Website) ← 실시간 UI 업데이트
+```
+
+### 서비스 구성
+
+| 서비스 | 포트 | 설명 |
+|--------|------|------|
+| logos_api | 8090 | FastAPI 백엔드 (이 프로젝트) |
+| ACP Server | 8888 | 에이전트 실행 서버 (`logosai/logosai/examples/standalone_acp_server.py`) |
+| Website | 3000 | Next.js 프론트엔드 |
+
+### ACP 서버 시작
+
+```bash
+# ACP 서버 실행 (자동 에이전트 선택 활성화)
+cd logosai/logosai/examples
+python standalone_acp_server.py --enable-auto-agent-selection
+```
+
 ## SSE 스트리밍 이벤트
 
 `POST /api/v1/chat/stream` 엔드포인트는 다음 이벤트를 스트리밍합니다:
 
+### 이벤트 목록
+
+| 이벤트 | 설명 | 단계 |
+|--------|------|------|
+| `initialization` | 시스템 초기화, 세션 생성 | 1 |
+| `ontology_init` | 온톨로지 쿼리 분석 시작 | 2 |
+| `multi_agent_init` | 멀티 에이전트 처리 시작 | 3 |
+| `query_analysis_started` | LLM 쿼리 분석 시작 | 4 |
+| `intent_analysis` | 사용자 의도 분석 | 5 |
+| `agent_scoring` | 에이전트 점수화 및 선택 | 6 |
+| `agent_query_generated` | 에이전트별 쿼리 생성 | 7 |
+| `analysis_complete` | 쿼리 분석 완료 | 8 |
+| `agents_selected` | 에이전트 선택 완료 | 9 |
+| `agent_started` | 에이전트 실행 시작 | 10 |
+| `agent_completed` | 에이전트 실행 완료 | 11 |
+| `integration_started` | 결과 통합 시작 | 12 |
+| `integration_completed` | 결과 통합 완료 | 13 |
+| `final_result` | 최종 결과 | 14 |
+| `message_saved` | 메시지 DB 저장 완료 | 15 |
+| `error` | 에러 발생 | - |
+
+### 클라이언트 예시
+
 ```javascript
-// 클라이언트 예시
+// POST 요청으로 SSE 스트림 연결
+const response = await fetch('/api/v1/chat/stream', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+    'Accept': 'text/event-stream'
+  },
+  body: JSON.stringify({
+    query: '1+1 계산해줘',
+    session_id: null,
+    project_id: null
+  })
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  const text = decoder.decode(value);
+  // SSE 이벤트 파싱
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      const eventType = line.substring(6).trim();
+      console.log('Event:', eventType);
+    } else if (line.startsWith('data:')) {
+      const data = JSON.parse(line.substring(5).trim());
+      console.log('Data:', data);
+    }
+  }
+}
+```
+
+### EventSource 사용 예시
+
+```javascript
+// 참고: EventSource는 GET만 지원하므로 POST 필요시 fetch 사용 권장
 const eventSource = new EventSource('/api/v1/chat/stream');
 
-eventSource.addEventListener('ontology_init', (e) => {
-  // 온톨로지 분석 시작
-  console.log(JSON.parse(e.data));
-});
-
 eventSource.addEventListener('agents_selected', (e) => {
-  // 에이전트 선택 완료
-  console.log(JSON.parse(e.data));
-});
-
-eventSource.addEventListener('workflow_plan_created', (e) => {
-  // 워크플로우 계획 생성
-  console.log(JSON.parse(e.data));
-});
-
-eventSource.addEventListener('agent_started', (e) => {
-  // 에이전트 실행 시작
-  console.log(JSON.parse(e.data));
-});
-
-eventSource.addEventListener('agent_progress', (e) => {
-  // 에이전트 진행 상황
-  console.log(JSON.parse(e.data));
-});
-
-eventSource.addEventListener('agent_completed', (e) => {
-  // 에이전트 완료
-  console.log(JSON.parse(e.data));
+  const data = JSON.parse(e.data);
+  console.log('선택된 에이전트:', data.agents);
 });
 
 eventSource.addEventListener('final_result', (e) => {
-  // 최종 결과
-  console.log(JSON.parse(e.data));
+  const data = JSON.parse(e.data);
+  console.log('최종 결과:', data.data.result);
+});
+
+eventSource.addEventListener('message_saved', (e) => {
+  const data = JSON.parse(e.data);
+  console.log('저장된 메시지 ID:', data.message_id);
 });
 
 eventSource.addEventListener('error', (e) => {
-  // 에러 발생
-  console.error(JSON.parse(e.data));
+  console.error('에러:', e);
 });
 ```
 

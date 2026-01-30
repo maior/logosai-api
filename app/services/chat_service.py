@@ -30,7 +30,6 @@ class ChatService:
 
     async def process_chat(
         self,
-        user_id: str,
         user_email: str,
         request: ChatRequest,
     ) -> dict[str, Any]:
@@ -38,8 +37,7 @@ class ChatService:
         Process chat request synchronously.
 
         Args:
-            user_id: User ID
-            user_email: User email
+            user_email: User email (used as primary identifier)
             request: Chat request
 
         Returns:
@@ -47,7 +45,7 @@ class ChatService:
         """
         # Get or create session
         session = await self._get_or_create_session(
-            user_id=user_id,
+            user_email=user_email,
             session_id=request.session_id,
             project_id=request.project_id,
         )
@@ -96,7 +94,6 @@ class ChatService:
 
     async def stream_chat(
         self,
-        user_id: str,
         user_email: str,
         request: ChatRequest,
     ) -> AsyncGenerator[dict[str, Any], None]:
@@ -104,8 +101,7 @@ class ChatService:
         Process chat request with streaming.
 
         Args:
-            user_id: User ID
-            user_email: User email
+            user_email: User email (used as primary identifier)
             request: Chat request
 
         Yields:
@@ -113,7 +109,7 @@ class ChatService:
         """
         # Get or create session
         session = await self._get_or_create_session(
-            user_id=user_id,
+            user_email=user_email,
             session_id=request.session_id,
             project_id=request.project_id,
         )
@@ -175,9 +171,27 @@ class ChatService:
             # Capture final result
             if event.get("event") == "final_result":
                 data = event.get("data", {})
-                final_content = data.get("content", "")
-                agent_type = data.get("agent_type")
+                # ACP server returns triple-nested structure:
+                # event.data.data.data.result (SSE wrapper -> event wrapper -> response wrapper -> result)
+                # Level 1: event.data = {"event": "final_result", "data": {...}}
+                # Level 2: data.data = {"code": 0, "msg": "success", "data": {...}}
+                # Level 3: inner.data = {"result": "...", "agent_results": [...]}
+
+                level1 = data.get("data", data)  # Handle both wrapped and unwrapped
+                level2 = level1.get("data", level1) if isinstance(level1, dict) else {}
+
+                final_content = level2.get("result", "") or data.get("content", "")
+
+                # Extract agent type from agent_results
+                agent_results = level2.get("agent_results", [])
+                if agent_results:
+                    agent_type = agent_results[0].get("agent_id")
+                else:
+                    agent_type = data.get("agent_type")
+
                 tokens_used = data.get("tokens_used")
+
+                logger.info(f"Captured final_result: content_length={len(final_content)}, agent_type={agent_type}")
 
         # Save assistant message if we got a result
         if final_content:
@@ -425,7 +439,7 @@ class ChatService:
 
     async def _get_or_create_session(
         self,
-        user_id: str,
+        user_email: str,
         session_id: Optional[str],
         project_id: Optional[str],
     ) -> Session:
@@ -433,7 +447,7 @@ class ChatService:
         if session_id:
             session = await self.session_service.get_by_id_and_user(
                 session_id=session_id,
-                user_id=user_id,
+                user_email=user_email,
             )
             if session:
                 return session
@@ -442,7 +456,7 @@ class ChatService:
         from app.schemas.session import SessionCreate
         session_data = SessionCreate(project_id=project_id)
         return await self.session_service.create(
-            user_id=user_id,
+            user_email=user_email,
             session_data=session_data,
         )
 
@@ -459,7 +473,7 @@ class ChatService:
         message = Message(
             id=str(uuid4()),
             session_id=session.id,
-            role=role,
+            role=role.value,  # Convert enum to string value for DB
             content=content,
             agent_type=agent_type,
             tokens_used=tokens_used,

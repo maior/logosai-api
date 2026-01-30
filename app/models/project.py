@@ -60,12 +60,7 @@ class Project(Base):
 
     # Relationships
     owner: Mapped["User"] = relationship("User", back_populates="projects", foreign_keys=[owner_email])
-    sessions: Mapped[list["Session"]] = relationship(
-        "Session",
-        back_populates="project",
-        cascade="all, delete-orphan",
-    )
-    # Note: user_files uses project_id as varchar, not foreign key
+    # Note: sessions relationship removed because session.project_id has no FK constraint
 
     # Compatibility property
     @property

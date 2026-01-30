@@ -53,7 +53,6 @@ async def chat(
 
     try:
         result = await service.process_chat(
-            user_id=current_user.id,
             user_email=current_user.email,
             request=request,
         )
@@ -130,7 +129,6 @@ async def chat_stream(
         """Generate SSE events."""
         try:
             async for event in service.stream_chat(
-                user_id=current_user.id,
                 user_email=current_user.email,
                 request=request,
             ):

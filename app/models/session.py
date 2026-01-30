@@ -14,12 +14,12 @@ from app.database import Base
 class Session(Base):
     """Session model for chat conversations.
 
-    Note: This table doesn't exist in logos_server (logosai schema).
-    It's a new table for logos_api.
+    Note: This is a new table for logos_api in the logosai schema.
     Uses user_email to reference logosai.users.email.
     """
 
     __tablename__ = "sessions"
+    __table_args__ = {"schema": "logosai"}
 
     id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
@@ -35,9 +35,9 @@ class Session(Base):
         nullable=False,
         index=True,
     )
+    # Project ID (no FK constraint since projects table may not exist)
     project_id: Mapped[Optional[str]] = mapped_column(
         UUID(as_uuid=False),
-        ForeignKey("projects.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -65,7 +65,6 @@ class Session(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="sessions", foreign_keys=[user_email])
-    project: Mapped[Optional["Project"]] = relationship("Project", back_populates="sessions")
 
     # Compatibility property
     @property
