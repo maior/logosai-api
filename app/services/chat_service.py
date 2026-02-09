@@ -165,7 +165,7 @@ class ChatService:
                 "event": "memory_context",
                 "data": {
                     "memory_count": memory_count,
-                    "message": f"사용자 메모리 {memory_count}건 로드됨",
+                    "message": f"Loaded {memory_count} user memories",
                 },
             }
 
