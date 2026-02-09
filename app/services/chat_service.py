@@ -1,87 +1,102 @@
-"""Chat service for handling chat operations."""
+"""Chat service for handling chat operations.
 
+Uses logosus schema for conversation and message storage (logos_api independent).
+"""
+
+import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Optional
 from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.message import Message, MessageRole
-from app.models.session import Session
+from app.models.logosus.conversation import Conversation, Message
 from app.schemas.chat import ChatRequest
 from app.services.acp_client import ACPClient, ACPClientError, get_acp_client
-from app.services.session_service import SessionService
+from app.services.orchestrator_service import OrchestratorService, get_orchestrator_service
+from app.services.conversation_service import ConversationService
 
 logger = logging.getLogger(__name__)
 
+# 환경 변수로 Orchestrator 사용 여부 제어
+USE_ORCHESTRATOR = os.getenv("USE_ORCHESTRATOR", "true").lower() == "true"
+
 
 class ChatService:
-    """Service for chat operations with streaming support."""
+    """Service for chat operations with streaming support.
+
+    Uses logosus.Conversation for chat sessions and logosus.Message for messages.
+    """
 
     def __init__(
         self,
         db: AsyncSession,
         acp_client: Optional[ACPClient] = None,
+        orchestrator_service: Optional[OrchestratorService] = None,
     ):
         self.db = db
         self.acp_client = acp_client or get_acp_client()
-        self.session_service = SessionService(db)
+        self.orchestrator_service = orchestrator_service or get_orchestrator_service()
+        self.conversation_service = ConversationService(db)
 
     async def process_chat(
         self,
-        user_email: str,
+        user_id: str,
         request: ChatRequest,
+        user_email: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Process chat request synchronously.
 
         Args:
-            user_email: User email (used as primary identifier)
+            user_id: User UUID (logosus.users.id)
             request: Chat request
+            user_email: Optional user email for ACP server
 
         Returns:
             Chat response
         """
-        # Get or create session
-        session = await self._get_or_create_session(
-            user_email=user_email,
-            session_id=request.session_id,
+        # Get or create conversation
+        conversation = await self._get_or_create_conversation(
+            user_id=user_id,
+            conversation_id=request.session_id,
             project_id=request.project_id,
         )
 
         # Save user message
         user_message = await self._save_message(
-            session=session,
-            role=MessageRole.USER,
+            conversation=conversation,
+            role="user",
             content=request.query,
         )
 
         try:
-            # Process through ACP server
+            # Process through ACP server (uses email for compatibility)
             response = await self.acp_client.process_query(
                 query=request.query,
-                user_email=user_email,
-                session_id=session.id,
+                user_email=user_email or user_id,  # Fallback to user_id
+                session_id=conversation.id,
                 project_id=request.project_id,
                 context=request.context,
             )
 
             # Save assistant message
             assistant_message = await self._save_message(
-                session=session,
-                role=MessageRole.ASSISTANT,
+                conversation=conversation,
+                role="assistant",
                 content=response.get("content", ""),
-                agent_type=response.get("agent_type"),
-                tokens_used=response.get("tokens_used"),
-                extra_data=response.get("metadata"),
+                agent_name=response.get("agent_type"),
+                tokens_output=response.get("tokens_used"),
+                agent_metadata=response.get("metadata"),
             )
 
             await self.db.commit()
 
             return {
                 "message_id": assistant_message.id,
-                "session_id": session.id,
+                "session_id": conversation.id,
                 "content": response.get("content", ""),
                 "agent_type": response.get("agent_type"),
                 "tokens_used": response.get("tokens_used"),
@@ -94,51 +109,220 @@ class ChatService:
 
     async def stream_chat(
         self,
-        user_email: str,
+        user_id: str,
         request: ChatRequest,
+        user_email: Optional[str] = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Process chat request with streaming.
 
+        USE_ORCHESTRATOR=true 일 때 WorkflowOrchestrator 사용 (Django와 동일한 기능)
+        USE_ORCHESTRATOR=false 일 때 직접 ACP 서버 호출 (레거시)
+
         Args:
-            user_email: User email (used as primary identifier)
+            user_id: User UUID (logosus.users.id)
             request: Chat request
+            user_email: Optional user email for ACP server
 
         Yields:
             SSE events
         """
-        # Get or create session
-        session = await self._get_or_create_session(
-            user_email=user_email,
-            session_id=request.session_id,
+        # Get or create conversation
+        conversation = await self._get_or_create_conversation(
+            user_id=user_id,
+            conversation_id=request.session_id,
             project_id=request.project_id,
         )
 
         # Save user message
         user_message = await self._save_message(
-            session=session,
-            role=MessageRole.USER,
+            conversation=conversation,
+            role="user",
             content=request.query,
         )
         await self.db.commit()
 
+        # Load user memories for context injection
+        enriched_context = {**(request.context or {})}
+        try:
+            from app.services.memory_service import MemoryService
+            memory_service = MemoryService(self.db)
+            user_memories_text = await memory_service.load_memories_for_context(user_id)
+            if user_memories_text:
+                enriched_context["user_memories"] = user_memories_text
+                logger.info(f"Loaded user memories for context injection ({len(user_memories_text)} chars)")
+        except Exception as e:
+            logger.debug(f"Memory loading skipped: {e}")
+
+        # Replace request context with enriched version
+        request.context = enriched_context if enriched_context else request.context
+
+        # Emit memory_context event if memories were loaded
+        if enriched_context.get("user_memories"):
+            mem_text = enriched_context["user_memories"]
+            memory_count = mem_text.count("\n- ")
+            yield {
+                "event": "memory_context",
+                "data": {
+                    "memory_count": memory_count,
+                    "message": f"사용자 메모리 {memory_count}건 로드됨",
+                },
+            }
+
         # Emit initial events (website-compatible)
         yield {
-            "event": "initialization",  # Website compatible
+            "event": "initialization",
             "data": {
                 "message": "시스템 초기화 중...",
                 "stage": "initialization",
-                "session_id": session.id,
+                "session_id": conversation.id,
                 "progress": 5,
             },
         }
 
+        # USE_ORCHESTRATOR=true 일 때 WorkflowOrchestrator 사용
+        if USE_ORCHESTRATOR:
+            logger.info("🚀 Using WorkflowOrchestrator for multi-agent streaming")
+            async for event in self._stream_with_orchestrator(conversation, request, user_email or user_id):
+                yield event
+            return
+
+        # 레거시: 직접 ACP 서버 호출 (DataTransformer 없음)
+        logger.info("⚠️ Using direct ACP streaming (no DataTransformer)")
+        async for event in self._stream_direct_acp(conversation, request, user_email or user_id):
+            yield event
+
+    async def _stream_with_orchestrator(
+        self,
+        conversation: Conversation,
+        request: ChatRequest,
+        user_email: str,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        WorkflowOrchestrator를 사용한 멀티 에이전트 스트리밍.
+
+        Django의 multi_agent_streaming.py와 동일한 기능:
+        - UnifiedQueryProcessor로 쿼리 분석
+        - WorkflowOrchestrator로 워크플로우 계획 생성
+        - DataTransformer로 에이전트 간 데이터 변환
+        - SSE 이벤트 스트리밍
+        """
+        final_content = ""
+        agent_type = None
+        agent_results = []
+
+        async for event in self.orchestrator_service.stream_with_orchestrator(
+            query=request.query,
+            user_email=user_email,
+            session_id=conversation.id,
+            project_id=request.project_id,
+            context=request.context,
+        ):
+            # Pass through events
+            yield event
+
+            # Capture final result
+            event_type = event.get("event", "")
+            if event_type == "final_result":
+                data = event.get("data", {})
+
+                # 결과 추출 (다중 레벨 중첩 처리)
+                level1 = data.get("data", data)
+                level2 = level1.get("data", level1) if isinstance(level1, dict) else {}
+
+                final_content = (
+                    level2.get("result", "") or
+                    data.get("result", "") or
+                    data.get("content", "")
+                )
+
+                # 에이전트 결과 추출
+                agent_results = level2.get("agent_results", data.get("agent_results", []))
+                if agent_results:
+                    agent_type = agent_results[0].get("agent_id")
+
+                logger.info(f"Captured final_result: content_length={len(final_content)}, agents={len(agent_results)}")
+
+        # Save assistant message
+        if final_content:
+            assistant_message = await self._save_message(
+                conversation=conversation,
+                role="assistant",
+                content=final_content,
+                agent_name=agent_type,
+                agent_metadata={"agent_results": agent_results} if agent_results else None,
+            )
+            await self.db.commit()
+
+            yield {
+                "event": "message_saved",
+                "data": {
+                    "message_id": assistant_message.id,
+                    "session_id": conversation.id,
+                },
+            }
+
+            # Background memory extraction (non-blocking)
+            asyncio.create_task(
+                self._extract_memories_background(
+                    user_id=conversation.user_id,
+                    conversation_id=conversation.id,
+                    query=request.query,
+                    response=final_content,
+                )
+            )
+
+    async def _extract_memories_background(
+        self,
+        user_id: str,
+        conversation_id: str,
+        query: str,
+        response: str,
+    ) -> None:
+        """Extract user memories from conversation in background.
+
+        Uses an independent DB session to avoid interfering with the
+        main request session.
+        """
+        try:
+            from app.database import get_db_context
+            from app.services.memory_service import MemoryService
+
+            async with get_db_context() as db:
+                memory_service = MemoryService(db)
+                new_memories = await memory_service.extract_memories_from_conversation(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    messages=[
+                        {"role": "user", "content": query},
+                        {"role": "assistant", "content": response},
+                    ],
+                )
+                if new_memories:
+                    logger.info(
+                        f"Background: extracted {len(new_memories)} memories "
+                        f"for user {user_id[:8]}..."
+                    )
+        except Exception as e:
+            logger.warning(f"Memory extraction failed (non-critical): {e}")
+
+    async def _stream_direct_acp(
+        self,
+        conversation: Conversation,
+        request: ChatRequest,
+        user_email: str,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """
+        레거시: 직접 ACP 서버 호출.
+
+        주의: DataTransformer가 작동하지 않으므로 멀티 에이전트 간 데이터 전달 불가.
+        """
         yield {
             "event": "ontology_init",
             "data": {
                 "message": "온톨로지 시스템으로 쿼리 분석 중...",
                 "stage": "ontology_initialization",
-                "session_id": session.id,
+                "session_id": conversation.id,
                 "progress": 10,
             },
         }
@@ -147,9 +331,8 @@ class ChatService:
         is_healthy = await self.acp_client.health_check()
 
         if not is_healthy:
-            # Fallback to mock streaming if ACP is not available
             logger.warning("ACP server not available, using fallback")
-            async for event in self._fallback_stream(session, request.query):
+            async for event in self._fallback_stream(conversation, request.query):
                 yield event
             return
 
@@ -161,28 +344,19 @@ class ChatService:
         async for event in self.acp_client.stream_query(
             query=request.query,
             user_email=user_email,
-            session_id=session.id,
+            session_id=conversation.id,
             project_id=request.project_id,
             context=request.context,
         ):
-            # Pass through events
             yield event
 
-            # Capture final result
             if event.get("event") == "final_result":
                 data = event.get("data", {})
-                # ACP server returns triple-nested structure:
-                # event.data.data.data.result (SSE wrapper -> event wrapper -> response wrapper -> result)
-                # Level 1: event.data = {"event": "final_result", "data": {...}}
-                # Level 2: data.data = {"code": 0, "msg": "success", "data": {...}}
-                # Level 3: inner.data = {"result": "...", "agent_results": [...]}
-
-                level1 = data.get("data", data)  # Handle both wrapped and unwrapped
+                level1 = data.get("data", data)
                 level2 = level1.get("data", level1) if isinstance(level1, dict) else {}
 
                 final_content = level2.get("result", "") or data.get("content", "")
 
-                # Extract agent type from agent_results
                 agent_results = level2.get("agent_results", [])
                 if agent_results:
                     agent_type = agent_results[0].get("agent_id")
@@ -193,29 +367,27 @@ class ChatService:
 
                 logger.info(f"Captured final_result: content_length={len(final_content)}, agent_type={agent_type}")
 
-        # Save assistant message if we got a result
         if final_content:
             assistant_message = await self._save_message(
-                session=session,
-                role=MessageRole.ASSISTANT,
+                conversation=conversation,
+                role="assistant",
                 content=final_content,
-                agent_type=agent_type,
-                tokens_used=tokens_used,
+                agent_name=agent_type,
+                tokens_output=tokens_used,
             )
             await self.db.commit()
 
-            # Send completion event
             yield {
                 "event": "message_saved",
                 "data": {
                     "message_id": assistant_message.id,
-                    "session_id": session.id,
+                    "session_id": conversation.id,
                 },
             }
 
     async def _fallback_stream(
         self,
-        session: Session,
+        conversation: Conversation,
         query: str,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
@@ -369,10 +541,10 @@ class ChatService:
 
         # Save the fallback response
         message = await self._save_message(
-            session=session,
-            role=MessageRole.ASSISTANT,
+            conversation=conversation,
+            role="assistant",
             content=fallback_content,
-            agent_type="fallback",
+            agent_name="fallback",
         )
         await self.db.commit()
 
@@ -421,7 +593,7 @@ class ChatService:
                 }],
                 # Legacy fields for backward compatibility
                 "message_id": message.id,
-                "session_id": session.id,
+                "session_id": conversation.id,
                 "content": fallback_content,
                 "agent_type": "fallback",
                 "progress": 100,
@@ -437,57 +609,65 @@ class ChatService:
             },
         }
 
-    async def _get_or_create_session(
+    async def _get_or_create_conversation(
         self,
-        user_email: str,
-        session_id: Optional[str],
+        user_id: str,
+        conversation_id: Optional[str],
         project_id: Optional[str],
-    ) -> Session:
-        """Get existing session or create new one."""
-        if session_id:
-            session = await self.session_service.get_by_id_and_user(
-                session_id=session_id,
-                user_email=user_email,
+    ) -> Conversation:
+        """Get existing conversation or create new one."""
+        if conversation_id:
+            conversation = await self.conversation_service.get_by_id_and_user(
+                conversation_id=conversation_id,
+                user_id=user_id,
             )
-            if session:
-                return session
+            if conversation:
+                return conversation
 
-        # Create new session
+        # Create new conversation
         from app.schemas.session import SessionCreate
         session_data = SessionCreate(project_id=project_id)
-        return await self.session_service.create(
-            user_email=user_email,
+        return await self.conversation_service.create(
+            user_id=user_id,
             session_data=session_data,
         )
 
     async def _save_message(
         self,
-        session: Session,
-        role: MessageRole,
+        conversation: Conversation,
+        role: str,
         content: str,
-        agent_type: Optional[str] = None,
-        tokens_used: Optional[int] = None,
-        extra_data: Optional[dict] = None,
+        agent_name: Optional[str] = None,
+        model: Optional[str] = None,
+        tokens_input: Optional[int] = None,
+        tokens_output: Optional[int] = None,
+        agent_metadata: Optional[dict] = None,
+        references: Optional[dict] = None,
     ) -> Message:
         """Save a message to the database."""
         message = Message(
-            id=str(uuid4()),
-            session_id=session.id,
-            role=role.value,  # Convert enum to string value for DB
+            conversation_id=conversation.id,
+            role=role,
             content=content,
-            agent_type=agent_type,
-            tokens_used=tokens_used,
-            extra_data=extra_data,
+            agent_name=agent_name,
+            model=model,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            agent_metadata=agent_metadata,
+            references=references,
         )
         self.db.add(message)
 
-        # Update session
-        session.message_count += 1
-        session.last_message_at = datetime.now(timezone.utc)
+        # Update conversation stats
+        conversation.message_count += 1
+        if tokens_input:
+            conversation.total_tokens += tokens_input
+        if tokens_output:
+            conversation.total_tokens += tokens_output
 
         # Set title from first user message
-        if not session.title and role == MessageRole.USER:
-            session.title = content[:100] + ("..." if len(content) > 100 else "")
+        if not conversation.title and role == "user":
+            conversation.title = content[:100] + ("..." if len(content) > 100 else "")
 
         await self.db.flush()
         await self.db.refresh(message)

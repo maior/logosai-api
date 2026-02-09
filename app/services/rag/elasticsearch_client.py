@@ -77,7 +77,13 @@ class ElasticsearchClient:
     async def index_exists(self, index_name: Optional[str] = None) -> bool:
         """Check if index exists."""
         idx = index_name or settings.elasticsearch_index_docs
-        return await self.client.indices.exists(index=idx)
+        try:
+            result = await self.client.indices.exists(index=idx)
+            # ES 8.x returns ObjectApiResponse, need to convert to bool
+            return bool(result)
+        except Exception as e:
+            logger.error(f"Error checking index existence: {e}")
+            return False
 
     async def create_index(self, index_name: Optional[str] = None) -> bool:
         """
@@ -147,7 +153,7 @@ class ElasticsearchClient:
         document_id: Optional[str] = None,
     ) -> int:
         """
-        Index documents to Elasticsearch.
+        Index documents to Elasticsearch directly.
 
         Args:
             documents: List of LangChain documents with content and metadata
@@ -158,35 +164,109 @@ class ElasticsearchClient:
         Returns:
             Number of indexed documents
         """
-        # Ensure index exists
-        await self.create_index()
+        import uuid
 
-        # Add user context to metadata
-        for doc in documents:
-            doc.metadata["user_id"] = user_id
-            if project_id:
-                doc.metadata["project_id"] = project_id
-            if document_id:
-                doc.metadata["document_id"] = document_id
+        # Ensure index exists with proper mapping for hybrid search
+        await self._ensure_langchain_compatible_index()
 
-        # Use LangChain store for indexing (handles embeddings automatically)
         embedding_service = get_embedding_service()
+        indexed_count = 0
+
+        for doc in documents:
+            try:
+                # Update metadata
+                doc.metadata["user_id"] = user_id
+                if project_id:
+                    doc.metadata["project_id"] = project_id
+                if document_id:
+                    doc.metadata["document_id"] = document_id
+
+                # Generate embedding for document content
+                embedding = embedding_service.encode(doc.page_content)
+
+                # Create document body matching LangChain schema
+                doc_body = {
+                    "content": doc.page_content,
+                    "embedding": embedding,
+                    "metadata": doc.metadata,
+                }
+
+                # Index to Elasticsearch
+                await self.client.index(
+                    index=settings.elasticsearch_index_docs,
+                    id=str(uuid.uuid4()),
+                    body=doc_body,
+                )
+                indexed_count += 1
+
+            except Exception as e:
+                logger.error(f"Failed to index document: {e}")
+
+        # Refresh index to make documents searchable immediately
+        await self.client.indices.refresh(index=settings.elasticsearch_index_docs)
+
+        logger.info(f"Indexed {indexed_count}/{len(documents)} documents to {settings.elasticsearch_index_docs}")
+        return indexed_count
+
+    async def _ensure_langchain_compatible_index(self) -> None:
+        """Create or update index with LangChain-compatible schema."""
         try:
-            ElasticsearchStore.from_documents(
-                documents,
-                embedding_service.model,
-                es_url=settings.elasticsearch_url,
-                index_name=settings.elasticsearch_index_docs,
-            )
-            logger.info(f"Indexed {len(documents)} documents")
-            return len(documents)
+            idx = settings.elasticsearch_index_docs
+
+            if await self.index_exists(idx):
+                return
+
+            # LangChain-compatible schema
+            index_body = {
+                "settings": {
+                    "index": {
+                        "number_of_shards": 1,
+                        "number_of_replicas": 1,
+                    }
+                },
+                "mappings": {
+                    "properties": {
+                        "content": {
+                            "type": "text",
+                            "analyzer": "standard",
+                        },
+                        "embedding": {
+                            "type": "dense_vector",
+                            "dims": 768,
+                            "index": True,
+                            "similarity": "cosine",
+                            "index_options": {
+                                "type": "int8_hnsw",
+                                "m": 16,
+                                "ef_construction": 100,
+                            },
+                        },
+                        "metadata": {
+                            "properties": {
+                                "user_id": {"type": "keyword"},
+                                "project_id": {"type": "keyword"},
+                                "document_id": {"type": "keyword"},
+                                "file_name": {
+                                    "type": "text",
+                                    "fields": {"keyword": {"type": "keyword", "ignore_above": 256}},
+                                },
+                                "file_type": {"type": "keyword"},
+                                "page": {"type": "integer"},
+                                "chunk_index": {"type": "integer"},
+                                "title": {"type": "text"},
+                                "created_at": {"type": "date"},
+                            }
+                        },
+                    }
+                },
+            }
+
+            await self.client.indices.create(index=idx, body=index_body)
+            logger.info(f"Created LangChain-compatible index: {idx}")
+
         except Exception as e:
-            # If index exists, use add_documents
-            if "resource_already_exists_exception" in str(e).lower():
-                self.store.add_documents(documents)
-                logger.info(f"Added {len(documents)} documents to existing index")
-                return len(documents)
-            raise
+            if "resource_already_exists_exception" not in str(e).lower():
+                logger.error(f"Error creating index: {e}")
 
     async def hybrid_search(
         self,
@@ -198,7 +278,7 @@ class ElasticsearchClient:
         min_score: float = 0.0,
     ) -> list[dict[str, Any]]:
         """
-        Perform hybrid search (keyword + vector).
+        Perform hybrid search (keyword + vector) using ES 8.x native KNN.
 
         Args:
             query: Search query
@@ -214,7 +294,11 @@ class ElasticsearchClient:
         embedding_service = get_embedding_service()
         query_vector = embedding_service.encode(query)
 
-        # Build filter conditions
+        # Convert numpy array to list if needed
+        if hasattr(query_vector, "tolist"):
+            query_vector = query_vector.tolist()
+
+        # Build filter for both keyword and KNN search
         filter_conditions = [{"term": {"metadata.user_id": user_id}}]
 
         if project_id:
@@ -223,42 +307,42 @@ class ElasticsearchClient:
         if document_ids:
             filter_conditions.append({"terms": {"metadata.document_id": document_ids}})
 
-        # Hybrid search query
-        search_query = {
+        filter_query = {"bool": {"must": filter_conditions}}
+
+        # ES 8.x Hybrid search: KNN + keyword query combined
+        # Using RRF (Reciprocal Rank Fusion) for score combination
+        search_body = {
+            "knn": {
+                "field": "embedding",
+                "query_vector": query_vector,
+                "k": top_k * 2,  # Fetch more for better fusion
+                "num_candidates": top_k * 10,
+                "filter": filter_query,
+                "boost": 1.0,
+            },
             "query": {
                 "bool": {
                     "filter": filter_conditions,
                     "should": [
-                        # Keyword search with boosting
                         {
                             "multi_match": {
                                 "query": query,
-                                "fields": ["text^2", "metadata.title", "metadata.file_name"],
+                                "fields": ["content^2", "metadata.title", "metadata.file_name"],
                                 "type": "most_fields",
                                 "tie_breaker": 0.3,
                             }
-                        },
-                        # Vector search
-                        {
-                            "script_score": {
-                                "query": {"match_all": {}},
-                                "script": {
-                                    "source": "cosineSimilarity(params.query_vector, 'vector') + 1.0",
-                                    "params": {"query_vector": query_vector},
-                                },
-                            }
-                        },
+                        }
                     ],
-                    "minimum_should_match": 1,
+                    "minimum_should_match": 0,
                 }
             },
             "size": top_k,
-            "_source": ["text", "metadata"],
+            "_source": ["content", "metadata"],
         }
 
         response = await self.client.search(
             index=settings.elasticsearch_index_docs,
-            body=search_query,
+            body=search_body,
         )
 
         results = []
@@ -269,7 +353,7 @@ class ElasticsearchClient:
 
             results.append(
                 {
-                    "content": hit["_source"].get("text", ""),
+                    "content": hit["_source"].get("content", ""),
                     "metadata": hit["_source"].get("metadata", {}),
                     "score": score,
                     "chunk_id": hit["_id"],
@@ -316,3 +400,19 @@ class ElasticsearchClient:
 def get_elasticsearch_client() -> ElasticsearchClient:
     """Get cached Elasticsearch client instance."""
     return ElasticsearchClient()
+
+
+def create_fresh_elasticsearch_client() -> ElasticsearchClient:
+    """
+    Create a new Elasticsearch client instance (not cached).
+
+    Use this for background tasks running in separate event loops.
+    The cached singleton doesn't work well with aiohttp in new event loops.
+    """
+    # Create new instance without singleton
+    client = object.__new__(ElasticsearchClient)
+    client._initialized = False
+    client._store = None
+    client._es_client = None
+    ElasticsearchClient.__init__(client)
+    return client

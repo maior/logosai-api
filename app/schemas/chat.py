@@ -12,6 +12,9 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     project_id: Optional[str] = None
 
+    # Email-based authentication (for OAuth users)
+    email: Optional[str] = None
+
     # Optional context
     context: Optional[dict[str, Any]] = None
 

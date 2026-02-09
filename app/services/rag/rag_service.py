@@ -11,7 +11,11 @@ import numpy as np
 
 from app.config import settings
 from app.services.rag.document_processor import DocumentProcessor
-from app.services.rag.elasticsearch_client import ElasticsearchClient, get_elasticsearch_client
+from app.services.rag.elasticsearch_client import (
+    ElasticsearchClient,
+    get_elasticsearch_client,
+    create_fresh_elasticsearch_client,
+)
 from app.services.rag.embedding_service import EmbeddingService, get_embedding_service
 from app.services.rag.rerank import EnhancedReRanker, detect_query_type
 

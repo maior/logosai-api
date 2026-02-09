@@ -1,6 +1,8 @@
 """Document processor for chunking and parsing files.
 
-Enhanced with paper metadata extraction and image processing support.
+Enhanced with universal document metadata extraction for various document types:
+- Academic papers, Corporate documents, PPT, Meeting minutes,
+- Legal documents, Insurance policies, and more.
 """
 
 import logging
@@ -15,9 +17,10 @@ from langchain_core.documents import Document as LangchainDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from app.config import settings
-from app.services.rag.paper_metadata import (
-    extract_paper_metadata,
-    extract_abstract,
+from app.services.rag.document_metadata import (
+    detect_document_type,
+    extract_universal_metadata,
+    DocumentType,
 )
 
 logger = logging.getLogger(__name__)
@@ -74,7 +77,7 @@ class DocumentProcessor:
             raise ValueError(f"Unsupported file type: {ext}")
 
         # Load document based on type
-        documents = await self._load_document(file_path, ext)
+        documents = await self._load_document(file_path, ext, file_name)
 
         if not documents:
             raise ValueError(f"Failed to load documents from {file_name}")
@@ -149,11 +152,12 @@ class DocumentProcessor:
         self,
         file_path: str,
         ext: str,
+        file_name: str = "",
     ) -> list[LangchainDocument]:
         """Load document based on file type."""
         try:
             if ext == ".pdf":
-                return await self._load_pdf(file_path)
+                return await self._load_pdf(file_path, file_name)
             elif ext in {".txt", ".md"}:
                 return await self._load_text(file_path)
             elif ext == ".docx":
@@ -171,14 +175,16 @@ class DocumentProcessor:
     async def _load_pdf(
         self,
         file_path: str,
+        file_name: str = "",
         extract_metadata: bool = True,
     ) -> list[LangchainDocument]:
         """
-        Load PDF document using PyMuPDF with paper metadata extraction.
+        Load PDF document using PyMuPDF with universal metadata extraction.
 
         Args:
             file_path: Path to PDF file
-            extract_metadata: Whether to extract paper metadata from first page
+            file_name: Original file name (for document type detection)
+            extract_metadata: Whether to extract metadata from first page
 
         Returns:
             List of LangChain documents with content and metadata
@@ -186,22 +192,32 @@ class DocumentProcessor:
         import fitz  # PyMuPDF
 
         documents = []
-        paper_metadata = {}
+        doc_metadata = {}
         doc = fitz.open(file_path)
+
+        # Collect first few pages for metadata extraction
+        first_pages_text = ""
+        for page_num in range(min(3, len(doc))):  # First 3 pages
+            page = doc[page_num]
+            first_pages_text += page.get_text() + "\n"
 
         for page_num, page in enumerate(doc):
             text = page.get_text()
             if not text.strip():
                 continue
 
-            # Extract paper metadata from first page
+            # Extract universal metadata from first pages
             if page_num == 0 and extract_metadata:
-                paper_metadata = extract_paper_metadata(text)
-                abstract = extract_abstract(text)
+                doc_metadata = extract_universal_metadata(first_pages_text, file_name)
+
+                # Get detected document type
+                doc_type = doc_metadata.get("doc_type", "general")
+                logger.info(f"Detected document type: {doc_type} for {file_name}")
+
+                # If abstract exists, prepend to first page for better context
+                abstract = doc_metadata.get("abstract")
                 if abstract:
-                    paper_metadata["abstract"] = abstract
-                    # Prepend abstract to first page
-                    text = f"{abstract}\n\n{text}"
+                    text = f"[Abstract]\n{abstract}\n\n{text}"
 
             documents.append(
                 LangchainDocument(
@@ -209,7 +225,7 @@ class DocumentProcessor:
                     metadata={
                         "page": page_num,
                         "source": file_path,
-                        **paper_metadata,
+                        **doc_metadata,
                     },
                 )
             )

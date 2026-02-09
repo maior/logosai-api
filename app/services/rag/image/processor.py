@@ -213,7 +213,7 @@ class ImageProcessor:
         top_k: int = 5,
     ) -> list[dict[str, Any]]:
         """
-        Search for images by caption.
+        Search for images by caption using ES 8.x native KNN.
 
         Args:
             query: Search query
@@ -228,29 +228,32 @@ class ImageProcessor:
             query_embedding = self.embedding_service.encode(query)
             index_name = settings.elasticsearch_index_images
 
+            # Convert numpy array to list if needed
+            if hasattr(query_embedding, "tolist"):
+                query_embedding = query_embedding.tolist()
+
             # Build filter
             filter_conditions = [{"term": {"user_email": user_email}}]
             if project_id:
                 filter_conditions.append({"term": {"project_id": project_id}})
 
-            # Search query
-            search_query = {
+            filter_query = {"bool": {"must": filter_conditions}}
+
+            # ES 8.x Hybrid search: KNN + keyword query combined
+            search_body = {
+                "knn": {
+                    "field": "vector",
+                    "query_vector": query_embedding,
+                    "k": top_k * 2,
+                    "num_candidates": top_k * 10,
+                    "filter": filter_query,
+                    "boost": 1.0,
+                },
                 "query": {
                     "bool": {
                         "filter": filter_conditions,
-                        "should": [
-                            {"match": {"caption": query}},
-                            {
-                                "script_score": {
-                                    "query": {"match_all": {}},
-                                    "script": {
-                                        "source": "cosineSimilarity(params.query_vector, 'vector') + 1.0",
-                                        "params": {"query_vector": query_embedding},
-                                    },
-                                }
-                            },
-                        ],
-                        "minimum_should_match": 1,
+                        "should": [{"match": {"caption": query}}],
+                        "minimum_should_match": 0,
                     }
                 },
                 "size": top_k,
@@ -259,7 +262,7 @@ class ImageProcessor:
 
             response = await self.es_client.client.search(
                 index=index_name,
-                body=search_query,
+                body=search_body,
             )
 
             results = []

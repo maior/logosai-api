@@ -50,6 +50,13 @@ from app.schemas.document import (
     DocumentChunk,
     DocumentProcessingStatus,
 )
+from app.schemas.memory import (
+    MemoryCreate,
+    MemoryUpdate,
+    MemoryResponse,
+    MemoryListResponse,
+    MemoryExtractRequest,
+)
 from app.schemas.marketplace import (
     AgentBase,
     AgentCreate,
@@ -117,6 +124,12 @@ __all__ = [
     "DocumentSearchResponse",
     "DocumentChunk",
     "DocumentProcessingStatus",
+    # Memory schemas
+    "MemoryCreate",
+    "MemoryUpdate",
+    "MemoryResponse",
+    "MemoryListResponse",
+    "MemoryExtractRequest",
     # Marketplace schemas
     "AgentBase",
     "AgentCreate",

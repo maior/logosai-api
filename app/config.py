@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str = ""
 
+    # Google AI (Gemini) - for memory extraction
+    google_api_key: str = ""
+
     # Anthropic
     anthropic_api_key: str = ""
 
@@ -50,8 +53,8 @@ class Settings(BaseSettings):
 
     # ElasticSearch (RAG) - logos_server와 동일한 ES 사용
     elasticsearch_url: str = "http://211.180.253.250:9820"
-    elasticsearch_index_docs: str = "mkii-docs"
-    elasticsearch_index_images: str = "mkii-images"
+    elasticsearch_index_docs: str = "logosai_documents"
+    elasticsearch_index_images: str = "logosai_images"
 
     # Embedding Model
     embedding_model_name: str = "jhgan/ko-sroberta-nli"

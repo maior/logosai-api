@@ -10,9 +10,10 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config import settings
 from app.database import init_db, close_db
 from app.services.acp_client import close_acp_client
+from app.services.orchestrator_service import close_orchestrator_service
 
 # Import routers
-from app.routers import auth, users, projects, sessions, chat, health, documents, marketplace
+from app.routers import auth, users, projects, sessions, chat, health, documents, marketplace, rag, agents, memory
 
 
 @asynccontextmanager
@@ -26,10 +27,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Initialize database
     # await init_db()  # Uncomment when models are ready
 
+    # Initialize agent registry (seed defaults + attempt ACP sync)
+    try:
+        from app.database import get_db_context
+        from app.services.agent_registry_service import AgentRegistryService
+
+        async with get_db_context() as db:
+            service = AgentRegistryService(db)
+            await service.ensure_default_acp_server()
+            seeded = await service.seed_defaults_if_empty()
+            if seeded:
+                print(f"📦 Seeded {seeded} default agents")
+
+            # Attempt ACP sync (non-blocking - server may not be running)
+            try:
+                result = await service.sync_from_acp()
+                print(f"📦 ACP sync: {result['added']} added, {result['updated']} updated, {result['total']} total")
+            except Exception as sync_err:
+                print(f"⚠️ ACP sync skipped: {sync_err}")
+    except Exception as e:
+        print(f"⚠️ Agent registry init skipped: {e}")
+
     yield
 
     # Shutdown
     print("👋 Shutting down...")
+    await close_orchestrator_service()
     await close_acp_client()
     await close_db()
 
@@ -70,6 +93,9 @@ app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"]
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
 app.include_router(marketplace.router, prefix="/api/v1/marketplace", tags=["Marketplace"])
+app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"])
+app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
+app.include_router(memory.router, prefix="/api/v1/memories", tags=["Memories"])
 
 
 @app.get("/")

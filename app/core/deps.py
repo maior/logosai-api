@@ -1,6 +1,7 @@
 """FastAPI dependencies for authentication and database.
 
-Uses email as the primary user identifier (matching logos_server).
+Uses logosus schema for user management (logos_api independent).
+Users are looked up by email but identified internally by UUID.
 """
 
 from typing import Annotated, Optional
@@ -11,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import verify_token
 from app.database import get_db
-from app.models.user import User
+from app.models.logosus.user import User
 from app.services.user_service import UserService
 
 
@@ -26,14 +27,15 @@ async def get_current_user(
     """
     Get current authenticated user from JWT token.
 
-    Uses email as the user identifier (matching logos_server).
+    Uses email to look up user, but user internally uses UUID as primary key.
+    This is the logosus schema which is independent from logos_server.
 
     Args:
         credentials: HTTP Bearer credentials
         db: Database session
 
     Returns:
-        Current user
+        Current user (logosus.User with UUID id)
 
     Raises:
         HTTPException: If authentication fails
@@ -63,7 +65,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get user from database by email (logos_server uses email as identifier)
+    # Get user from database by email (logosus.users uses email as unique index)
     user_email = payload.get("email") or payload.get("sub")
     user_service = UserService(db)
     user = await user_service.get_by_email(user_email)
@@ -75,7 +77,14 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # is_active is always True (property in User model)
+    # Check if user is active
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is disabled",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return user
 
 
