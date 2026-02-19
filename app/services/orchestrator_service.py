@@ -60,7 +60,7 @@ def _ensure_imports():
             UnifiedQueryProcessor,
             get_unified_query_processor,
         )
-        from ontology.engines.knowledge_graph_clean import KnowledgeGraphEngine
+        from ontology.engines.knowledge_graph_clean import KnowledgeGraphEngine, get_knowledge_graph_engine
         from ontology.system.visualization_manager import VisualizationManager
 
         _orchestrator_available = True
@@ -119,11 +119,11 @@ class OrchestratorService:
                 enable_streaming=True,
             )
 
-            # KnowledgeGraphEngine 및 VisualizationManager 초기화
+            # KnowledgeGraphEngine 및 VisualizationManager 초기화 (shared singleton)
             try:
-                self._knowledge_graph = KnowledgeGraphEngine()
+                self._knowledge_graph = get_knowledge_graph_engine()
                 self._visualization_manager = VisualizationManager(self._knowledge_graph)
-                logger.info("✅ KnowledgeGraphEngine and VisualizationManager initialized")
+                logger.info("✅ KnowledgeGraphEngine initialized (shared singleton) + VisualizationManager")
             except Exception as kg_error:
                 logger.warning(f"⚠️ Knowledge graph initialization failed: {kg_error}")
                 self._knowledge_graph = None
@@ -461,6 +461,28 @@ class OrchestratorService:
                     converted = self._enhance_planning_complete(converted, agents)
                     # 🆕 선택된 에이전트 정보 저장 (KG 시각화용)
                     selected_agents_from_plan = converted.get("data", {}).get("selected_agents", [])
+
+                    # v3.0: Emit ML selection metadata for dashboard
+                    try:
+                        from ontology.core.hybrid_agent_selector import get_hybrid_selector
+                        _sel = get_hybrid_selector()
+                        if hasattr(_sel, '_selection_history') and _sel._selection_history:
+                            _latest = _sel._selection_history[-1]
+                            yield {
+                                "event": "ml_selection",
+                                "data": {
+                                    "method": _latest.get("method", "unknown"),
+                                    "confidence": _latest.get("confidence", 0),
+                                    "value_estimate": _latest.get("value_estimate", 0),
+                                    "elapsed_ms": _latest.get("elapsed_ms", 0),
+                                    "selected_agent": _latest.get("selected_agent", ""),
+                                    "gnn_rl_enabled": _sel._gnn_rl_enabled,
+                                    "total_selections": _sel.stats.get("total_selections", 0),
+                                    "message": f"ML: {_latest.get('method', 'unknown')} (conf: {_latest.get('confidence', 0):.0%})",
+                                },
+                            }
+                    except Exception:
+                        pass  # Non-critical, skip silently
 
                 # 🆕 agent_complete 이벤트에서 실행 결과 수집
                 if converted.get("event") == "agent_complete":
@@ -1223,7 +1245,35 @@ def get_orchestrator_service() -> OrchestratorService:
 
 
 async def close_orchestrator_service() -> None:
-    """Close global OrchestratorService."""
+    """Close global OrchestratorService — saves KG, stats, and ML models."""
     global _orchestrator_service
+
+    # 1. Save KG checkpoint
+    try:
+        from ontology.engines.knowledge_graph_clean import get_knowledge_graph_engine
+        kg = get_knowledge_graph_engine()
+        kg.save_to_disk()
+    except Exception as e:
+        logger.warning(f"⚠️ KG checkpoint save on shutdown failed: {e}")
+
+    # 2. Save HybridAgentSelector stats
+    try:
+        from ontology.core.hybrid_agent_selector import get_hybrid_selector
+        selector = get_hybrid_selector()
+        selector.save_stats()
+    except Exception as e:
+        logger.warning(f"⚠️ Selector stats save on shutdown failed: {e}")
+
+    # 3. Save GNN+RL ML models
+    try:
+        from ontology.core.hybrid_agent_selector import get_hybrid_selector
+        selector = get_hybrid_selector()
+        if selector._intelligent_selector is not None:
+            selector._intelligent_selector.save_models()
+            logger.info("💾 GNN+RL models saved on shutdown")
+    except Exception as e:
+        logger.warning(f"⚠️ GNN+RL model save on shutdown failed: {e}")
+
     if _orchestrator_service:
+        logger.info("👋 OrchestratorService shutdown complete (checkpoints saved)")
         _orchestrator_service = None

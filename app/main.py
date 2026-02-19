@@ -13,7 +13,7 @@ from app.services.acp_client import close_acp_client
 from app.services.orchestrator_service import close_orchestrator_service
 
 # Import routers
-from app.routers import auth, users, projects, sessions, chat, health, documents, marketplace, rag, agents, memory
+from app.routers import auth, users, projects, sessions, chat, health, documents, marketplace, rag, agents, memory, ml_dashboard
 
 
 @asynccontextmanager
@@ -96,6 +96,7 @@ app.include_router(marketplace.router, prefix="/api/v1/marketplace", tags=["Mark
 app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"])
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
 app.include_router(memory.router, prefix="/api/v1/memories", tags=["Memories"])
+app.include_router(ml_dashboard.router, prefix="/api/v1/ml", tags=["ML Dashboard"])
 
 
 @app.get("/")
