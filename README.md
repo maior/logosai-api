@@ -1,23 +1,23 @@
 # LogosAI API
 
-FastAPI 기반의 LogosAI 백엔드 서버입니다. 온톨로지 기반 멀티 에이전트 AI 시스템을 위한 RESTful API를 제공합니다.
+A FastAPI-based backend server for LogosAI. Provides RESTful APIs for the ontology-driven multi-agent AI system.
 
-> **상태**: ✅ Production Ready (2026-01-30)
-> ACP 서버 통합 완료, 전체 채팅 플로우 검증 완료
+> **Status**: ✅ Production Ready (2026-01-30)
+> ACP server integration complete, full chat flow verified
 
-## 주요 기능
+## Key Features
 
-- **인증 시스템**: Google OAuth + JWT 토큰 기반 인증
-- **프로젝트 관리**: 프로젝트 CRUD, 아카이브, 공유
-- **세션 관리**: 대화 세션 및 메시지 히스토리
-- **실시간 채팅**: SSE 스트리밍 기반 AI 응답 ✅ (ACP 서버 통합 완료)
-- **문서 관리**: 파일 업로드 및 RAG 검색
-- **마켓플레이스**: 에이전트 등록/검색/구매
+- **Authentication**: Google OAuth + JWT token-based authentication
+- **Project Management**: Project CRUD, archiving, and sharing
+- **Session Management**: Conversation sessions and message history
+- **Real-time Chat**: SSE streaming-based AI responses ✅ (ACP server integration complete)
+- **Document Management**: File upload and RAG search
+- **Marketplace**: Agent registration, search, and purchase
 
-## 기술 스택
+## Tech Stack
 
-| 분류 | 기술 |
-|------|------|
+| Category | Technology |
+|----------|------------|
 | Framework | FastAPI 0.109+ |
 | Database | PostgreSQL + SQLAlchemy 2.0 (async) |
 | Auth | JWT (python-jose) + Google OAuth |
@@ -25,43 +25,43 @@ FastAPI 기반의 LogosAI 백엔드 서버입니다. 온톨로지 기반 멀티 
 | Streaming | SSE (sse-starlette) |
 | Migration | Alembic |
 
-## 빠른 시작
+## Quick Start
 
-### 요구사항
+### Prerequisites
 
 - Python 3.11+
 - PostgreSQL 14+
 - pip
 
-### 설치
+### Installation
 
 ```bash
-# 저장소 클론
+# Clone the repository
 git clone https://github.com/maior/logosai-api.git
 cd logosai-api
 
-# 가상환경 생성 및 활성화
+# Create and activate virtual environment
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-# 의존성 설치
+# Install dependencies
 pip install -e .
 
-# 개발 의존성 설치 (선택)
+# Install dev dependencies (optional)
 pip install -e ".[dev]"
 ```
 
-### 환경 설정
+### Configuration
 
 ```bash
-# .env 파일 생성
+# Create .env file
 cp .env.example .env
 
-# .env 파일 편집
+# Edit .env file
 vim .env
 ```
 
-필수 환경 변수:
+Required environment variables:
 
 ```env
 # Database
@@ -74,176 +74,176 @@ JWT_SECRET_KEY=your-super-secret-key-change-in-production
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 
-# ACP Server (에이전트 실행 서버)
+# ACP Server (Agent execution server)
 ACP_SERVER_URL=http://localhost:8888
 ```
 
-### 데이터베이스 마이그레이션
+### Database Migration
 
 ```bash
-# 마이그레이션 실행
+# Run migrations
 alembic upgrade head
 ```
 
-### 서버 실행
+### Running the Server
 
 ```bash
-# 개발 서버 실행 (자동 리로드)
+# Development server (with auto-reload)
 uvicorn app.main:app --reload --port 8090
 
-# 프로덕션 실행
+# Production
 uvicorn app.main:app --host 0.0.0.0 --port 8090 --workers 4
 ```
 
-서버 실행 후:
-- API 문서: http://localhost:8090/docs
+Once the server is running:
+- API Docs: http://localhost:8090/docs
 - ReDoc: http://localhost:8090/redoc
 - Health Check: http://localhost:8090/health
 
-## API 구조
+## API Reference
 
-### 인증 (Authentication)
+### Authentication
 
-| Method | Endpoint | 설명 |
-|--------|----------|------|
-| POST | `/api/v1/auth/login/google` | Google OAuth 로그인 |
-| POST | `/api/v1/auth/refresh` | 토큰 갱신 |
-| POST | `/api/v1/auth/logout` | 로그아웃 |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/auth/login/google` | Google OAuth login |
+| POST | `/api/v1/auth/refresh` | Refresh token |
+| POST | `/api/v1/auth/logout` | Logout |
 
-### 사용자 (Users)
+### Users
 
-| Method | Endpoint | 설명 |
-|--------|----------|------|
-| GET | `/api/v1/users/me` | 현재 사용자 정보 |
-| PUT | `/api/v1/users/me` | 프로필 수정 |
-| GET | `/api/v1/users/me/subscription` | 구독 정보 |
-| PUT | `/api/v1/users/me/api-keys` | API 키 설정 |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/users/me` | Get current user info |
+| PUT | `/api/v1/users/me` | Update profile |
+| GET | `/api/v1/users/me/subscription` | Get subscription info |
+| PUT | `/api/v1/users/me/api-keys` | Configure API keys |
 
-### 프로젝트 (Projects)
+### Projects
 
-| Method | Endpoint | 설명 |
-|--------|----------|------|
-| GET | `/api/v1/projects/` | 프로젝트 목록 |
-| POST | `/api/v1/projects/` | 프로젝트 생성 |
-| GET | `/api/v1/projects/{id}` | 프로젝트 조회 |
-| PUT | `/api/v1/projects/{id}` | 프로젝트 수정 |
-| DELETE | `/api/v1/projects/{id}` | 프로젝트 삭제 |
-| POST | `/api/v1/projects/{id}/archive` | 아카이브 |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/projects/` | List projects |
+| POST | `/api/v1/projects/` | Create project |
+| GET | `/api/v1/projects/{id}` | Get project |
+| PUT | `/api/v1/projects/{id}` | Update project |
+| DELETE | `/api/v1/projects/{id}` | Delete project |
+| POST | `/api/v1/projects/{id}/archive` | Archive project |
 
-### 세션 (Sessions)
+### Sessions
 
-| Method | Endpoint | 설명 |
-|--------|----------|------|
-| GET | `/api/v1/sessions/` | 세션 목록 |
-| POST | `/api/v1/sessions/` | 세션 생성 |
-| GET | `/api/v1/sessions/{id}` | 세션 조회 |
-| DELETE | `/api/v1/sessions/{id}` | 세션 삭제 |
-| GET | `/api/v1/sessions/{id}/messages` | 메시지 목록 |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/sessions/` | List sessions |
+| POST | `/api/v1/sessions/` | Create session |
+| GET | `/api/v1/sessions/{id}` | Get session |
+| DELETE | `/api/v1/sessions/{id}` | Delete session |
+| GET | `/api/v1/sessions/{id}/messages` | List messages |
 
-### 채팅 (Chat)
+### Chat
 
-| Method | Endpoint | 설명 |
-|--------|----------|------|
-| POST | `/api/v1/chat/` | 채팅 (동기) |
-| POST | `/api/v1/chat/stream` | 채팅 (SSE 스트리밍) |
-| GET | `/api/v1/chat/health` | 서비스 상태 |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/chat/` | Chat (synchronous) |
+| POST | `/api/v1/chat/stream` | Chat (SSE streaming) |
+| GET | `/api/v1/chat/health` | Service health |
 
-### 문서 (Documents)
+### Documents
 
-| Method | Endpoint | 설명 |
-|--------|----------|------|
-| GET | `/api/v1/documents/` | 문서 목록 |
-| POST | `/api/v1/documents/upload` | 문서 업로드 |
-| GET | `/api/v1/documents/{id}` | 문서 조회 |
-| PUT | `/api/v1/documents/{id}` | 문서 수정 |
-| DELETE | `/api/v1/documents/{id}` | 문서 삭제 |
-| POST | `/api/v1/documents/search` | RAG 검색 |
-| POST | `/api/v1/documents/{id}/reprocess` | 문서 재처리 |
-| GET | `/api/v1/documents/{id}/content` | 문서 내용 조회 |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/documents/` | List documents |
+| POST | `/api/v1/documents/upload` | Upload document |
+| GET | `/api/v1/documents/{id}` | Get document |
+| PUT | `/api/v1/documents/{id}` | Update document |
+| DELETE | `/api/v1/documents/{id}` | Delete document |
+| POST | `/api/v1/documents/search` | RAG search |
+| POST | `/api/v1/documents/{id}/reprocess` | Reprocess document |
+| GET | `/api/v1/documents/{id}/content` | Get document content |
 
-지원 파일 형식: PDF, TXT, Markdown, DOCX, CSV, JSON (최대 50MB)
+Supported file formats: PDF, TXT, Markdown, DOCX, CSV, JSON (max 50MB)
 
-### 마켓플레이스 (Marketplace)
+### Marketplace
 
-| Method | Endpoint | 설명 |
-|--------|----------|------|
-| GET | `/api/v1/marketplace/agents` | 에이전트 검색/필터 |
-| GET | `/api/v1/marketplace/agents/featured` | 추천 에이전트 |
-| GET | `/api/v1/marketplace/agents/categories` | 카테고리 목록 |
-| POST | `/api/v1/marketplace/agents` | 에이전트 등록 |
-| GET | `/api/v1/marketplace/agents/my` | 내 에이전트 |
-| GET | `/api/v1/marketplace/agents/{id}` | 에이전트 상세 |
-| PUT | `/api/v1/marketplace/agents/{id}` | 에이전트 수정 |
-| DELETE | `/api/v1/marketplace/agents/{id}` | 에이전트 삭제 |
-| POST | `/api/v1/marketplace/agents/{id}/publish` | 에이전트 게시 |
-| POST | `/api/v1/marketplace/agents/{id}/unpublish` | 게시 취소 |
-| GET | `/api/v1/marketplace/agents/{id}/stats` | 통계 조회 |
-| GET | `/api/v1/marketplace/agents/{id}/reviews` | 리뷰 목록 |
-| POST | `/api/v1/marketplace/agents/{id}/reviews` | 리뷰 작성 |
-| PUT | `/api/v1/marketplace/agents/{id}/reviews` | 리뷰 수정 |
-| DELETE | `/api/v1/marketplace/agents/{id}/reviews` | 리뷰 삭제 |
-| POST | `/api/v1/marketplace/agents/{id}/purchase` | 에이전트 구매 |
-| GET | `/api/v1/marketplace/purchases` | 구매 내역 |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/marketplace/agents` | Search/filter agents |
+| GET | `/api/v1/marketplace/agents/featured` | Featured agents |
+| GET | `/api/v1/marketplace/agents/categories` | List categories |
+| POST | `/api/v1/marketplace/agents` | Register agent |
+| GET | `/api/v1/marketplace/agents/my` | My agents |
+| GET | `/api/v1/marketplace/agents/{id}` | Agent details |
+| PUT | `/api/v1/marketplace/agents/{id}` | Update agent |
+| DELETE | `/api/v1/marketplace/agents/{id}` | Delete agent |
+| POST | `/api/v1/marketplace/agents/{id}/publish` | Publish agent |
+| POST | `/api/v1/marketplace/agents/{id}/unpublish` | Unpublish agent |
+| GET | `/api/v1/marketplace/agents/{id}/stats` | Agent statistics |
+| GET | `/api/v1/marketplace/agents/{id}/reviews` | List reviews |
+| POST | `/api/v1/marketplace/agents/{id}/reviews` | Write review |
+| PUT | `/api/v1/marketplace/agents/{id}/reviews` | Update review |
+| DELETE | `/api/v1/marketplace/agents/{id}/reviews` | Delete review |
+| POST | `/api/v1/marketplace/agents/{id}/purchase` | Purchase agent |
+| GET | `/api/v1/marketplace/purchases` | Purchase history |
 
-가격 유형: 무료(free), 일회성(one_time), 구독(subscription), 사용량 기반(usage_based)
+Pricing types: free, one_time, subscription, usage_based
 
-## ACP 서버 통합 아키텍처
+## ACP Server Integration Architecture
 
-logos_api는 ACP(Agent Communication Protocol) 서버와 통합되어 멀티 에이전트 AI 시스템을 제공합니다.
+logos_api integrates with an ACP (Agent Communication Protocol) server to provide a multi-agent AI system.
 
-> **중요**: 채팅 기능을 사용하려면 ACP 서버가 반드시 실행 중이어야 합니다.
+> **Important**: The ACP server must be running for the chat feature to work.
 
-### 전체 플로우
+### End-to-End Flow
 
 ```
 Frontend (logos_web)
-    │
-    ▼ POST /api/v1/chat/stream
-┌─────────────────────────────────────────────┐
-│              logos_api (8090)               │
-├─────────────────────────────────────────────┤
-│ 1. JWT 인증 → 사용자 조회                   │
-│ 2. 세션 생성/조회                           │
-│ 3. 사용자 메시지 저장 (role: user)          │
-│ 4. ACP 서버로 스트리밍 요청                 │
-└─────────────────┬───────────────────────────┘
-                  │ SSE Stream
-                  ▼
-┌─────────────────────────────────────────────┐
-│              ACP Server (8888)              │
-├─────────────────────────────────────────────┤
-│ 5. 쿼리 분석 (LLM)                          │
-│ 6. 에이전트 선택 (자동)                     │
-│ 7. 에이전트 실행                            │
-│ 8. 결과 통합 (LLM)                          │
-│ 9. final_result 이벤트 전송                 │
-└─────────────────┬───────────────────────────┘
-                  │ SSE Events
-                  ▼
-┌─────────────────────────────────────────────┐
-│              logos_api (8090)               │
-├─────────────────────────────────────────────┤
-│ 10. Assistant 메시지 저장 (role: assistant) │
-│ 11. message_saved 이벤트 전송               │
-└─────────────────┬───────────────────────────┘
-                  │ SSE Response
-                  ▼
-Frontend (logos_web) ← 실시간 UI 업데이트
+    |
+    v POST /api/v1/chat/stream
++---------------------------------------------+
+|              logos_api (8090)                |
++---------------------------------------------+
+| 1. JWT authentication -> User lookup         |
+| 2. Session creation/retrieval                |
+| 3. Save user message (role: user)            |
+| 4. Stream request to ACP server              |
++-----------------------+---------------------+
+                        | SSE Stream
+                        v
++---------------------------------------------+
+|              ACP Server (8888)              |
++---------------------------------------------+
+| 5. Query analysis (LLM)                     |
+| 6. Agent selection (automatic)               |
+| 7. Agent execution                           |
+| 8. Result integration (LLM)                  |
+| 9. Send final_result event                   |
++-----------------------+---------------------+
+                        | SSE Events
+                        v
++---------------------------------------------+
+|              logos_api (8090)                |
++---------------------------------------------+
+| 10. Save assistant message (role: assistant) |
+| 11. Send message_saved event                 |
++-----------------------+---------------------+
+                        | SSE Response
+                        v
+Frontend (logos_web) <- Real-time UI update
 ```
 
-### 서비스 구성
+### Service Configuration
 
-| 서비스 | 포트 | 설명 |
-|--------|------|------|
-| logos_api | 8090 | FastAPI 백엔드 (이 프로젝트) |
-| ACP Server | 8888 | 에이전트 실행 서버 ([logosai-framework](https://github.com/maior/logosai-framework)) |
-| logos_web | 8010 | Next.js 프론트엔드 ([logosai-web](https://github.com/maior/logosai-web)) |
+| Service | Port | Description |
+|---------|------|-------------|
+| logos_api | 8090 | FastAPI backend (this project) |
+| ACP Server | 8888 | Agent execution server ([logosai-framework](https://github.com/maior/logosai-framework)) |
+| logos_web | 8010 | Next.js frontend ([logosai-web](https://github.com/maior/logosai-web)) |
 
-### ACP 서버 설정 (필수)
+### ACP Server Setup (Required)
 
-채팅 기능을 사용하려면 ACP 서버가 필요합니다. [logosai-framework](https://github.com/maior/logosai-framework)의 `SimpleACPServer`를 사용하세요.
+The ACP server is required for chat functionality. Use the `SimpleACPServer` from [logosai-framework](https://github.com/maior/logosai-framework).
 
-#### 빠른 시작
+#### Quick Start
 
 ```bash
 pip install logosai
@@ -256,10 +256,10 @@ from logosai.acp import SimpleACPServer
 
 class HelloAgent(SimpleAgent):
     agent_name = "Hello Agent"
-    agent_description = "간단한 인사 에이전트"
+    agent_description = "A simple greeting agent"
 
     async def handle(self, query, context=None):
-        return AgentResponse.success(content={"answer": f"안녕하세요! '{query}'에 대한 응답입니다."})
+        return AgentResponse.success(content={"answer": f"Hello! Here is the response to '{query}'."})
 
 server = SimpleACPServer(port=8888)
 server.add(HelloAgent())
@@ -267,53 +267,53 @@ server.run()
 ```
 
 ```bash
-# ACP 서버 실행
+# Run the ACP server
 python my_acp_server.py
 
-# 확인
+# Verify
 curl http://localhost:8888/jsonrpc -d '{"jsonrpc":"2.0","method":"list_agents","id":1}'
 ```
 
-#### 샘플 서버 사용
+#### Using the Sample Server
 
 ```bash
 git clone https://github.com/maior/logosai-framework.git
 cd logosai-framework/samples
 pip install logosai
-python sample_acp_server.py  # 포트 8888에서 실행
+python sample_acp_server.py  # Runs on port 8888
 ```
 
-자세한 에이전트 개발 방법은 [logosai-framework README](https://github.com/maior/logosai-framework#4-run-a-multi-agent-server)를 참조하세요.
+For detailed agent development instructions, see the [logosai-framework README](https://github.com/maior/logosai-framework#4-run-a-multi-agent-server).
 
-## SSE 스트리밍 이벤트
+## SSE Streaming Events
 
-`POST /api/v1/chat/stream` 엔드포인트는 다음 이벤트를 스트리밍합니다:
+The `POST /api/v1/chat/stream` endpoint streams the following events:
 
-### 이벤트 목록
+### Event List
 
-| 이벤트 | 설명 | 단계 |
-|--------|------|------|
-| `initialization` | 시스템 초기화, 세션 생성 | 1 |
-| `ontology_init` | 온톨로지 쿼리 분석 시작 | 2 |
-| `multi_agent_init` | 멀티 에이전트 처리 시작 | 3 |
-| `query_analysis_started` | LLM 쿼리 분석 시작 | 4 |
-| `intent_analysis` | 사용자 의도 분석 | 5 |
-| `agent_scoring` | 에이전트 점수화 및 선택 | 6 |
-| `agent_query_generated` | 에이전트별 쿼리 생성 | 7 |
-| `analysis_complete` | 쿼리 분석 완료 | 8 |
-| `agents_selected` | 에이전트 선택 완료 | 9 |
-| `agent_started` | 에이전트 실행 시작 | 10 |
-| `agent_completed` | 에이전트 실행 완료 | 11 |
-| `integration_started` | 결과 통합 시작 | 12 |
-| `integration_completed` | 결과 통합 완료 | 13 |
-| `final_result` | 최종 결과 | 14 |
-| `message_saved` | 메시지 DB 저장 완료 | 15 |
-| `error` | 에러 발생 | - |
+| Event | Description | Stage |
+|-------|-------------|-------|
+| `initialization` | System initialization, session creation | 1 |
+| `ontology_init` | Ontology query analysis started | 2 |
+| `multi_agent_init` | Multi-agent processing started | 3 |
+| `query_analysis_started` | LLM query analysis started | 4 |
+| `intent_analysis` | User intent analysis | 5 |
+| `agent_scoring` | Agent scoring and selection | 6 |
+| `agent_query_generated` | Per-agent query generation | 7 |
+| `analysis_complete` | Query analysis complete | 8 |
+| `agents_selected` | Agent selection complete | 9 |
+| `agent_started` | Agent execution started | 10 |
+| `agent_completed` | Agent execution completed | 11 |
+| `integration_started` | Result integration started | 12 |
+| `integration_completed` | Result integration completed | 13 |
+| `final_result` | Final result | 14 |
+| `message_saved` | Message saved to database | 15 |
+| `error` | Error occurred | - |
 
-### 클라이언트 예시
+### Client Example
 
 ```javascript
-// POST 요청으로 SSE 스트림 연결
+// Connect to SSE stream via POST request
 const response = await fetch('/api/v1/chat/stream', {
   method: 'POST',
   headers: {
@@ -322,7 +322,7 @@ const response = await fetch('/api/v1/chat/stream', {
     'Accept': 'text/event-stream'
   },
   body: JSON.stringify({
-    query: '1+1 계산해줘',
+    query: 'Calculate 1+1',
     session_id: null,
     project_id: null
   })
@@ -336,7 +336,7 @@ while (true) {
   if (done) break;
 
   const text = decoder.decode(value);
-  // SSE 이벤트 파싱
+  // Parse SSE events
   const lines = text.split('\n');
   for (const line of lines) {
     if (line.startsWith('event:')) {
@@ -350,42 +350,42 @@ while (true) {
 }
 ```
 
-### EventSource 사용 예시
+### EventSource Example
 
 ```javascript
-// 참고: EventSource는 GET만 지원하므로 POST 필요시 fetch 사용 권장
+// Note: EventSource only supports GET; use fetch for POST requests
 const eventSource = new EventSource('/api/v1/chat/stream');
 
 eventSource.addEventListener('agents_selected', (e) => {
   const data = JSON.parse(e.data);
-  console.log('선택된 에이전트:', data.agents);
+  console.log('Selected agents:', data.agents);
 });
 
 eventSource.addEventListener('final_result', (e) => {
   const data = JSON.parse(e.data);
-  console.log('최종 결과:', data.data.result);
+  console.log('Final result:', data.data.result);
 });
 
 eventSource.addEventListener('message_saved', (e) => {
   const data = JSON.parse(e.data);
-  console.log('저장된 메시지 ID:', data.message_id);
+  console.log('Saved message ID:', data.message_id);
 });
 
 eventSource.addEventListener('error', (e) => {
-  console.error('에러:', e);
+  console.error('Error:', e);
 });
 ```
 
-## 데이터베이스 스키마
+## Database Schema
 
-### User 테이블 (logosai.users)
+### User Table (logosai.users)
 
-> **중요**: `logos_server`와의 호환성을 위해 `email`을 기본 키로 사용합니다 (UUID `id` 아님).
+> **Important**: The `email` field is used as the primary key for backward compatibility with `logos_server` (not the UUID `id`).
 
 ```sql
--- logosai.users 테이블 스키마
+-- logosai.users table schema
 CREATE TABLE logosai.users (
-    email VARCHAR(255) PRIMARY KEY,  -- email이 PK
+    email VARCHAR(255) PRIMARY KEY,  -- email is PK
     name VARCHAR(255) NOT NULL,
     picture_url TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -397,59 +397,59 @@ CREATE TABLE logosai.users (
 );
 ```
 
-### 외래 키 참조
+### Foreign Key References
 
-모든 테이블에서 사용자 참조 시 `email`을 사용합니다:
+All tables reference users via the `email` field:
 
 ```python
-# Project 모델 예시
+# Project model example
 owner_email: Mapped[str] = mapped_column(
     String(255),
     ForeignKey("logosai.users.email", ondelete="CASCADE"),
 )
 
-# Session 모델 예시
+# Session model example
 user_email: Mapped[str] = mapped_column(
     String(255),
     ForeignKey("logosai.users.email", ondelete="CASCADE"),
 )
 ```
 
-### 호환성 속성
+### Compatibility Properties
 
-API 호환성을 위해 각 모델에 `id` 속성이 있습니다:
+Each model provides an `id` property for API compatibility:
 
 ```python
-# User 모델
+# User model
 @property
 def id(self) -> str:
-    return self.email  # email을 id로 반환
+    return self.email  # Returns email as id
 
-# Project 모델
+# Project model
 @property
 def owner_id(self) -> str:
-    return self.owner_email  # 호환성 속성
+    return self.owner_email  # Compatibility property
 ```
 
-## 프로젝트 구조
+## Project Structure
 
 ```
 logos_api/
-├── alembic/                 # DB 마이그레이션
-│   └── versions/            # 마이그레이션 스크립트
+├── alembic/                 # DB migrations
+│   └── versions/            # Migration scripts
 ├── app/
-│   ├── core/                # 핵심 모듈
-│   │   ├── deps.py          # FastAPI 의존성
-│   │   ├── exceptions.py    # 커스텀 예외
-│   │   └── security.py      # JWT 인증
-│   ├── models/              # SQLAlchemy 모델
+│   ├── core/                # Core modules
+│   │   ├── deps.py          # FastAPI dependencies
+│   │   ├── exceptions.py    # Custom exceptions
+│   │   └── security.py      # JWT authentication
+│   ├── models/              # SQLAlchemy models
 │   │   ├── user.py          # User, UserHistory, SubscriptionPlan
 │   │   ├── project.py       # Project (owner_email FK)
 │   │   ├── session.py       # Session (user_email FK)
 │   │   ├── message.py
 │   │   ├── document.py
 │   │   └── marketplace.py   # MarketplaceAgent, AgentReview, AgentPurchase
-│   ├── routers/             # API 라우터
+│   ├── routers/             # API routers
 │   │   ├── auth.py
 │   │   ├── users.py
 │   │   ├── projects.py
@@ -457,7 +457,7 @@ logos_api/
 │   │   ├── chat.py
 │   │   ├── documents.py
 │   │   └── marketplace.py
-│   ├── schemas/             # Pydantic 스키마
+│   ├── schemas/             # Pydantic schemas
 │   │   ├── auth.py
 │   │   ├── user.py
 │   │   ├── project.py
@@ -465,7 +465,7 @@ logos_api/
 │   │   ├── chat.py
 │   │   ├── document.py
 │   │   └── marketplace.py
-│   ├── services/            # 비즈니스 로직
+│   ├── services/            # Business logic
 │   │   ├── auth_service.py
 │   │   ├── user_service.py
 │   │   ├── project_service.py
@@ -474,81 +474,81 @@ logos_api/
 │   │   ├── acp_client.py
 │   │   ├── document_service.py
 │   │   ├── marketplace_service.py
-│   │   └── rag/             # RAG 서비스
+│   │   └── rag/             # RAG services
 │   │       ├── rag_service.py
 │   │       ├── elasticsearch_client.py
 │   │       ├── embedding_service.py
 │   │       ├── document_processor.py
 │   │       ├── paper_metadata.py
-│   │       ├── rerank/      # 리랭킹 시스템
-│   │       └── image/       # 이미지 처리
-│   ├── config.py            # 설정
-│   ├── database.py          # DB 연결
-│   └── main.py              # 앱 엔트리포인트
-├── docs/                    # 문서
-├── tests/                   # 테스트
-├── .env.example             # 환경 변수 예시
-├── alembic.ini              # Alembic 설정
-├── pyproject.toml           # 프로젝트 설정
+│   │       ├── rerank/      # Reranking system
+│   │       └── image/       # Image processing
+│   ├── config.py            # Configuration
+│   ├── database.py          # DB connection
+│   └── main.py              # App entrypoint
+├── docs/                    # Documentation
+├── tests/                   # Tests
+├── .env.example             # Environment variables example
+├── alembic.ini              # Alembic configuration
+├── pyproject.toml           # Project configuration
 └── README.md
 ```
 
-## 개발
+## Development
 
-### 테스트 실행
+### Running Tests
 
 ```bash
-# 전체 테스트
+# Run all tests
 pytest
 
-# 커버리지 포함
+# With coverage
 pytest --cov=app --cov-report=html
 ```
 
-### 코드 포맷팅
+### Code Formatting
 
 ```bash
-# Black 포맷팅
+# Black formatting
 black app/
 
-# Ruff 린트
+# Ruff linting
 ruff check app/
 
-# 타입 체크
+# Type checking
 mypy app/
 ```
 
-### 마이그레이션 생성
+### Creating Migrations
 
 ```bash
-# 자동 생성 (DB 연결 필요)
+# Auto-generate (requires DB connection)
 alembic revision --autogenerate -m "Add new table"
 
-# 수동 생성
+# Manual creation
 alembic revision -m "Custom migration"
 ```
 
-## 환경 변수
+## Environment Variables
 
-| 변수명 | 필수 | 기본값 | 설명 |
-|--------|------|--------|------|
-| `DATABASE_URL` | ✓ | - | PostgreSQL 연결 URL |
-| `JWT_SECRET_KEY` | ✓ | - | JWT 서명 키 |
-| `JWT_ALGORITHM` | | HS256 | JWT 알고리즘 |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | | 1440 | 액세스 토큰 만료 (분) |
-| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | | 7 | 리프레시 토큰 만료 (일) |
-| `GOOGLE_CLIENT_ID` | | - | Google OAuth 클라이언트 ID |
-| `GOOGLE_CLIENT_SECRET` | | - | Google OAuth 시크릿 |
-| `ACP_SERVER_URL` | | http://localhost:8888 | ACP 서버 URL |
-| `CORS_ORIGINS` | | ["http://localhost:3000"] | CORS 허용 오리진 |
-| `DEBUG` | | false | 디버그 모드 |
-| `ENVIRONMENT` | | development | 환경 (development/staging/production) |
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_URL` | Yes | - | PostgreSQL connection URL |
+| `JWT_SECRET_KEY` | Yes | - | JWT signing key |
+| `JWT_ALGORITHM` | | HS256 | JWT algorithm |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | | 1440 | Access token expiry (minutes) |
+| `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | | 7 | Refresh token expiry (days) |
+| `GOOGLE_CLIENT_ID` | | - | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | | - | Google OAuth secret |
+| `ACP_SERVER_URL` | | http://localhost:8888 | ACP server URL |
+| `CORS_ORIGINS` | | ["http://localhost:3000"] | Allowed CORS origins |
+| `DEBUG` | | false | Debug mode |
+| `ENVIRONMENT` | | development | Environment (development/staging/production) |
 
-## 라이선스
+## License
 
 MIT License
 
-## 기여
+## Contributing
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -556,10 +556,10 @@ MIT License
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 관련 프로젝트
+## Related Projects
 
-| 프로젝트 | 설명 | 저장소 |
-|----------|------|--------|
+| Project | Description | Repository |
+|---------|-------------|------------|
 | **logosai-framework** | Python SDK + Agent Runtime | [github.com/maior/logosai-framework](https://github.com/maior/logosai-framework) |
-| **logosai-ontology** | 온톨로지 멀티에이전트 오케스트레이션 | [github.com/maior/logosai-ontology](https://github.com/maior/logosai-ontology) |
-| **logosai-web** | Next.js 프론트엔드 | [github.com/maior/logosai-web](https://github.com/maior/logosai-web) |
+| **logosai-ontology** | Ontology-based multi-agent orchestration | [github.com/maior/logosai-ontology](https://github.com/maior/logosai-ontology) |
+| **logosai-web** | Next.js frontend | [github.com/maior/logosai-web](https://github.com/maior/logosai-web) |
