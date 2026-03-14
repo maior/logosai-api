@@ -135,7 +135,7 @@ from ontology.core.hybrid_agent_selector import get_hybrid_selector
 
 selector = get_hybrid_selector()
 agent, metadata = await selector.select_agent(
-    query="삼성전자 주가 알려줘",
+    query="Show me Samsung stock price",
     available_agents=["internet_agent", "analysis_agent"],
     agents_info=agents_info
 )
@@ -428,12 +428,12 @@ print(jwt.encode(payload, 'your-super-secret-key-change-this-in-production', alg
 curl -X POST "http://localhost:8090/api/v1/chat/stream" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query": "1+1 계산해줘"}'
+  -d '{"query": "Calculate 1+1"}'
 
 # Chat streaming test (email auth - OAuth users)
 curl -X POST "http://localhost:8090/api/v1/chat/stream" \
   -H "Content-Type: application/json" \
-  -d '{"query": "1+1 계산해줘", "email": "test@example.com"}'
+  -d '{"query": "Calculate 1+1", "email": "test@example.com"}'
 
 # List sessions (email auth)
 curl -H "X-User-Email: test@example.com" \
@@ -494,9 +494,9 @@ async def test_query(query: str, expected_agent: str):
 
 # Required test queries (minimum 3)
 tests = [
-    ("1+1은 얼마야?", "calculator_agent"),      # Simple calculation
-    ("달러 환율 알려줘", "currency_exchange_agent"), # External API
-    ("서울 날씨 알려줘", "weather_agent"),          # Real-time data
+    ("What is 1+1?", "calculator_agent"),              # Simple calculation
+    ("USD to KRW exchange rate", "currency_exchange_agent"), # External API
+    ("Weather in Seoul", "weather_agent"),              # Real-time data
 ]
 ```
 
@@ -545,9 +545,9 @@ tail -f ../logosai/logs/acp_server.log
 
 ```python
 # ❌ Forbidden: hardcoded keyword matching
-if "날씨" in query:
+if "weather" in query:
     agent = "weather_agent"
-elif "쇼핑" in query:
+elif "shopping" in query:
     agent = "shopping_agent"
 
 # ❌ Forbidden: hardcoded specific agent names
