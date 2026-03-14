@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     port: int = 8080
     workers: int = 1
 
-    # Database (logos_server와 동일한 DB 사용)
-    database_url: str = "postgresql+asyncpg://logosai:logosai1234@211.180.253.250:5432/logosai"
+    # Database
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/logosai"
 
     # JWT
     jwt_secret_key: str = "your-secret-key-change-in-production"
@@ -51,8 +51,8 @@ class Settings(BaseSettings):
     # ACP Server
     acp_server_url: str = "http://localhost:8888"
 
-    # ElasticSearch (RAG) - logos_server와 동일한 ES 사용
-    elasticsearch_url: str = "http://211.180.253.250:9820"
+    # ElasticSearch (RAG)
+    elasticsearch_url: str = "http://localhost:9200"
     elasticsearch_index_docs: str = "logosai_documents"
     elasticsearch_index_images: str = "logosai_images"
 

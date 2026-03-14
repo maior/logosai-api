@@ -210,6 +210,7 @@ class ChatService:
         final_content = ""
         agent_type = None
         agent_results = []
+        knowledge_graph = None
 
         async for event in self.orchestrator_service.stream_with_orchestrator(
             query=request.query,
@@ -241,16 +242,49 @@ class ChatService:
                 if agent_results:
                     agent_type = agent_results[0].get("agent_id")
 
-                logger.info(f"Captured final_result: content_length={len(final_content)}, agents={len(agent_results)}")
+                # 이미지/링크가 포함된 리치 콘텐츠가 agent_results에 있으면
+                # 오케스트레이터 요약 대신 원본 에이전트 결과를 사용
+                if agent_results:
+                    best_rich = None
+                    best_len = 0
+                    for ar in agent_results:
+                        ac = ar.get("result", "")
+                        if isinstance(ac, dict):
+                            ac = ac.get("content", ac.get("answer", ""))
+                        if isinstance(ac, str) and ac and ("![" in ac or "<img" in ac or "<!--SHOP_DATA:" in ac):
+                            if len(ac) > best_len:
+                                best_rich = ac
+                                best_len = len(ac)
+                    if best_rich and best_len > len(final_content):
+                        logger.info(
+                            f"Using rich agent content ({best_len} chars) "
+                            f"instead of summary ({len(final_content)} chars)"
+                        )
+                        final_content = best_rich
+
+                # Knowledge Graph 추출
+                knowledge_graph = (
+                    level2.get("knowledge_graph_visualization") or
+                    level1.get("knowledge_graph_visualization") or
+                    data.get("knowledge_graph_visualization")
+                )
+
+                logger.info(f"Captured final_result: content_length={len(final_content)}, agents={len(agent_results)}, has_kg={knowledge_graph is not None}")
 
         # Save assistant message
         if final_content:
+            agent_metadata = {}
+            if agent_results:
+                agent_metadata["agent_results"] = agent_results
+            if knowledge_graph:
+                agent_metadata["knowledge_graph"] = knowledge_graph
+
             assistant_message = await self._save_message(
                 conversation=conversation,
                 role="assistant",
                 content=final_content,
                 agent_name=agent_type,
-                agent_metadata={"agent_results": agent_results} if agent_results else None,
+                agent_metadata=agent_metadata if agent_metadata else None,
             )
             await self.db.commit()
 
@@ -340,6 +374,8 @@ class ChatService:
         final_content = ""
         agent_type = None
         tokens_used = None
+        agent_results = []
+        knowledge_graph = None
 
         async for event in self.acp_client.stream_query(
             query=request.query,
@@ -365,15 +401,29 @@ class ChatService:
 
                 tokens_used = data.get("tokens_used")
 
-                logger.info(f"Captured final_result: content_length={len(final_content)}, agent_type={agent_type}")
+                # Knowledge Graph 추출
+                knowledge_graph = (
+                    level2.get("knowledge_graph_visualization") or
+                    level1.get("knowledge_graph_visualization") or
+                    data.get("knowledge_graph_visualization")
+                )
+
+                logger.info(f"Captured final_result: content_length={len(final_content)}, agent_type={agent_type}, has_kg={knowledge_graph is not None}")
 
         if final_content:
+            agent_metadata = {}
+            if agent_results:
+                agent_metadata["agent_results"] = agent_results
+            if knowledge_graph:
+                agent_metadata["knowledge_graph"] = knowledge_graph
+
             assistant_message = await self._save_message(
                 conversation=conversation,
                 role="assistant",
                 content=final_content,
                 agent_name=agent_type,
                 tokens_output=tokens_used,
+                agent_metadata=agent_metadata if agent_metadata else None,
             )
             await self.db.commit()
 

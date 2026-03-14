@@ -61,6 +61,12 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
+# Test files (local only)
+test_*.py
+test_files/
+test_uploads/
+uploads/
+
 # OS
 .DS_Store
 Thumbs.db
