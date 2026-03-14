@@ -518,6 +518,8 @@ MIT License
 
 ## 관련 프로젝트
 
-- [LogosAI Server](https://github.com/maior/logosai-server) - Django 백엔드 (레거시)
-- [LogosAI Ontology](https://github.com/maior/logosai-ontology) - 온톨로지 시스템
-- [LogosAI SDK](https://github.com/maior/logosai) - Python SDK
+| 프로젝트 | 설명 | 저장소 |
+|----------|------|--------|
+| **logosai-framework** | Python SDK + Agent Runtime | [github.com/maior/logosai-framework](https://github.com/maior/logosai-framework) |
+| **logosai-ontology** | 온톨로지 멀티에이전트 오케스트레이션 | [github.com/maior/logosai-ontology](https://github.com/maior/logosai-ontology) |
+| **logosai-web** | Next.js 프론트엔드 | [github.com/maior/logosai-web](https://github.com/maior/logosai-web) |
