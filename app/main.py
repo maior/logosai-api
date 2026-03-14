@@ -44,7 +44,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 result = await service.sync_from_acp()
                 print(f"📦 ACP sync: {result['added']} added, {result['updated']} updated, {result['total']} total")
             except Exception as sync_err:
-                print(f"⚠️ ACP sync skipped: {sync_err}")
+                print(f"⚠️ ACP server not reachable at {settings.acp_server_url}")
+                print(f"   Chat features require a running ACP server.")
+                print(f"   Quick start:")
+                print(f"     pip install logosai")
+                print(f"     # Then run a sample ACP server (see logosai-framework/samples/)")
+                print(f"   Docs: https://github.com/maior/logosai-framework#4-run-a-multi-agent-server")
     except Exception as e:
         print(f"⚠️ Agent registry init skipped: {e}")
 

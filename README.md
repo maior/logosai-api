@@ -191,10 +191,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8090 --workers 4
 
 logos_api는 ACP(Agent Communication Protocol) 서버와 통합되어 멀티 에이전트 AI 시스템을 제공합니다.
 
+> **중요**: 채팅 기능을 사용하려면 ACP 서버가 반드시 실행 중이어야 합니다.
+
 ### 전체 플로우
 
 ```
-Frontend (Website)
+Frontend (logos_web)
     │
     ▼ POST /api/v1/chat/stream
 ┌─────────────────────────────────────────────┐
@@ -210,7 +212,7 @@ Frontend (Website)
 ┌─────────────────────────────────────────────┐
 │              ACP Server (8888)              │
 ├─────────────────────────────────────────────┤
-│ 5. 쿼리 분석 (LLM: gemini-2.5-flash-lite)  │
+│ 5. 쿼리 분석 (LLM)                          │
 │ 6. 에이전트 선택 (자동)                     │
 │ 7. 에이전트 실행                            │
 │ 8. 결과 통합 (LLM)                          │
@@ -226,7 +228,7 @@ Frontend (Website)
 └─────────────────┬───────────────────────────┘
                   │ SSE Response
                   ▼
-Frontend (Website) ← 실시간 UI 업데이트
+Frontend (logos_web) ← 실시간 UI 업데이트
 ```
 
 ### 서비스 구성
@@ -234,16 +236,54 @@ Frontend (Website) ← 실시간 UI 업데이트
 | 서비스 | 포트 | 설명 |
 |--------|------|------|
 | logos_api | 8090 | FastAPI 백엔드 (이 프로젝트) |
-| ACP Server | 8888 | 에이전트 실행 서버 (`logosai/logosai/examples/standalone_acp_server.py`) |
-| Website | 3000 | Next.js 프론트엔드 |
+| ACP Server | 8888 | 에이전트 실행 서버 ([logosai-framework](https://github.com/maior/logosai-framework)) |
+| logos_web | 8010 | Next.js 프론트엔드 ([logosai-web](https://github.com/maior/logosai-web)) |
 
-### ACP 서버 시작
+### ACP 서버 설정 (필수)
+
+채팅 기능을 사용하려면 ACP 서버가 필요합니다. [logosai-framework](https://github.com/maior/logosai-framework)의 `SimpleACPServer`를 사용하세요.
+
+#### 빠른 시작
 
 ```bash
-# ACP 서버 실행 (자동 에이전트 선택 활성화)
-cd logosai/logosai/examples
-python standalone_acp_server.py --enable-auto-agent-selection
+pip install logosai
 ```
+
+```python
+# my_acp_server.py
+from logosai import SimpleAgent, AgentResponse
+from logosai.acp import SimpleACPServer
+
+class HelloAgent(SimpleAgent):
+    agent_name = "Hello Agent"
+    agent_description = "간단한 인사 에이전트"
+
+    async def handle(self, query, context=None):
+        return AgentResponse.success(content={"answer": f"안녕하세요! '{query}'에 대한 응답입니다."})
+
+server = SimpleACPServer(port=8888)
+server.add(HelloAgent())
+server.run()
+```
+
+```bash
+# ACP 서버 실행
+python my_acp_server.py
+
+# 확인
+curl http://localhost:8888/jsonrpc -d '{"jsonrpc":"2.0","method":"list_agents","id":1}'
+```
+
+#### 샘플 서버 사용
+
+```bash
+git clone https://github.com/maior/logosai-framework.git
+cd logosai-framework/samples
+pip install logosai
+python sample_acp_server.py  # 포트 8888에서 실행
+```
+
+자세한 에이전트 개발 방법은 [logosai-framework README](https://github.com/maior/logosai-framework#4-run-a-multi-agent-server)를 참조하세요.
 
 ## SSE 스트리밍 이벤트
 
