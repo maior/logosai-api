@@ -12,8 +12,15 @@ from app.database import init_db, close_db
 from app.services.acp_client import close_acp_client
 from app.services.orchestrator_service import close_orchestrator_service
 
-# Import routers
-from app.routers import auth, users, projects, sessions, chat, health, documents, marketplace, rag, agents, memory, ml_dashboard
+# Import routers (core)
+from app.routers import auth, users, projects, sessions, chat, health, marketplace, agents, memory, ml_dashboard
+
+# Import RAG routers (optional — requires pip install logos-api[rag])
+try:
+    from app.routers import documents, rag
+    _rag_available = True
+except ImportError:
+    _rag_available = False
 
 
 @asynccontextmanager
@@ -96,9 +103,12 @@ app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(projects.router, prefix="/api/v1/projects", tags=["Projects"])
 app.include_router(sessions.router, prefix="/api/v1/sessions", tags=["Sessions"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["Chat"])
-app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
 app.include_router(marketplace.router, prefix="/api/v1/marketplace", tags=["Marketplace"])
-app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"])
+if _rag_available:
+    app.include_router(documents.router, prefix="/api/v1/documents", tags=["Documents"])
+    app.include_router(rag.router, prefix="/api/v1/rag", tags=["RAG"])
+else:
+    print("  ℹ️  RAG/Document features disabled (install with: pip install -e '.[rag]')")
 app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
 app.include_router(memory.router, prefix="/api/v1/memories", tags=["Memories"])
 app.include_router(ml_dashboard.router, prefix="/api/v1/ml", tags=["ML Dashboard"])
