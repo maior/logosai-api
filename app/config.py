@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # Anthropic
     anthropic_api_key: str = ""
 
+    # Internet Search
+    tavily_api_key: str = ""
+
     # Auth Mode
     auth_mode: str = "team"  # "personal" or "team"
     personal_user_email: str = ""  # email for personal mode
