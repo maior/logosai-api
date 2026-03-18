@@ -158,8 +158,15 @@ class ChatService:
                     content = msg.content[:500] if msg.content else ""
                     history_lines.append(f"{role}: {content}")
                 if history_lines:
-                    enriched_context["conversation_history"] = "\n".join(history_lines[-10:])
+                    history_text = "\n".join(history_lines[-10:])
+                    enriched_context["conversation_history"] = history_text
                     logger.info(f"💬 Loaded {len(history_lines)} messages as conversation history")
+
+                    # Expand ambiguous queries using conversation history
+                    # "2달 전과 비교해줘" → "테슬라 주식 2달 전과 현재 비교"
+                    request.query = await self._expand_query_with_history(
+                        request.query, history_text
+                    )
         except Exception as e:
             logger.warning(f"Conversation history loading failed: {e}")
 
@@ -701,6 +708,64 @@ class ChatService:
             user_id=user_id,
             session_data=session_data,
         )
+
+    async def _expand_query_with_history(self, query: str, history: str) -> str:
+        """Expand ambiguous follow-up queries using conversation history.
+
+        "2달 전과 비교해줘" + history("테슬라 주식") → "테슬라 주식 2달 전과 현재 비교"
+        If query is already self-contained, returns it unchanged.
+        """
+        import asyncio
+
+        # Quick check: if query already has enough context (>15 chars with nouns), skip
+        if len(query) > 30:
+            return query
+
+        try:
+            from logosai.utils.llm_client import LLMClient
+            import os
+
+            google_key = os.getenv("GOOGLE_API_KEY", "")
+            if not google_key:
+                return query
+
+            llm = LLMClient(provider="google", model="gemini-2.5-flash-lite", temperature=0, max_tokens=200)
+            await llm.initialize()
+
+            messages = [
+                {"role": "system", "content": """You are a query expander. Given a conversation history and a follow-up query,
+output ONLY the expanded query. If the query already has enough context, return it unchanged.
+
+Rules:
+- Include the topic/subject from conversation history
+- Keep it concise (one sentence)
+- Same language as the user's query
+- Output ONLY the expanded query, nothing else
+
+Example:
+History: User: 테슬라 주식 어때? Assistant: 테슬라 주가는 391달러...
+Query: 2달 전과 비교해줘
+Output: 테슬라 주식 2달 전과 현재 비교
+
+Example:
+History: User: 삼성전자 주가 알려줘 Assistant: 삼성전자 현재 주가는...
+Query: 현재가는?
+Output: 삼성전자 현재 주가"""},
+                {"role": "user", "content": f"History:\n{history[-500:]}\n\nQuery: {query}"},
+            ]
+
+            expanded = await asyncio.wait_for(llm.invoke_messages(messages), timeout=5)
+            expanded = expanded.strip() if isinstance(expanded, str) else str(expanded).strip()
+
+            # Sanity check
+            if expanded and len(expanded) > len(query) and len(expanded) < 200:
+                logger.info(f"🔄 Query expanded: '{query}' → '{expanded}'")
+                return expanded
+            return query
+
+        except Exception as e:
+            logger.debug(f"Query expansion skipped: {e}")
+            return query
 
     async def _save_message(
         self,

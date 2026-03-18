@@ -531,8 +531,20 @@ class OrchestratorService:
                         # Check if result indicates agent failure
                         if isinstance(result_content, dict) and result_content.get("success") is False:
                             has_agent_failure = True
-                        elif isinstance(result_content, str) and ("success': False" in result_content or "not running" in result_content):
-                            has_agent_failure = True
+                        elif isinstance(result_content, str):
+                            failure_indicators = [
+                                "success': False",
+                                "not running",
+                                "충분한 숫자 데이터를 추출하지 못했습니다",
+                                "데이터를 추출하지 못",
+                                "처리할 수 없",
+                                "에이전트가 현재 사용 불가",
+                                "No result received",
+                                "Agent execution failed",
+                            ]
+                            if any(indicator in result_content for indicator in failure_indicators):
+                                has_agent_failure = True
+                                logger.warning(f"⚠️ Agent failure detected in result: {result_content[:100]}")
 
                         if not has_agent_failure:
                             # Inject collected agent results
