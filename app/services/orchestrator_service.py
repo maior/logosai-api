@@ -168,36 +168,23 @@ class OrchestratorService:
         """
         ACP 서버를 통해 에이전트를 실행합니다.
 
-        WorkflowOrchestrator의 ExecutionEngine이 이 함수를 호출합니다.
-        에이전트가 ACP에 없으면 llm_chat_agent로 fallback합니다.
+        실패 시 _failed_agents에 기록하여 재시도 시 registry에서 제거합니다.
         """
         import aiohttp
         import json
 
-        # Check if agent is actually running on ACP
+        # Check if agent is in the live set
         live_ids = getattr(self, '_live_agent_ids', set())
         if live_ids and agent_id not in live_ids:
-            # Try to find a similar agent in live set
-            fallback_id = None
-            for lid in live_ids:
-                if agent_id.split('_')[0] in lid:
-                    fallback_id = lid
-                    break
-            if not fallback_id:
-                fallback_id = "llm_chat_agent" if "llm_chat_agent" in live_ids else next(iter(live_ids), None)
-
-            if fallback_id:
-                logger.warning(
-                    f"⚠️ Agent '{agent_id}' not running on ACP. "
-                    f"Falling back to '{fallback_id}'"
-                )
-                agent_id = fallback_id
-            else:
-                return {
-                    "success": False,
-                    "error": f"Agent '{agent_id}' not available and no fallback found",
-                    "agent_id": agent_id,
-                }
+            logger.warning(f"⚠️ Agent '{agent_id}' not in live ACP agents — marking as failed")
+            if not hasattr(self, '_failed_agents'):
+                self._failed_agents = set()
+            self._failed_agents.add(agent_id)
+            return {
+                "success": False,
+                "error": f"Agent '{agent_id}' is not running on ACP server",
+                "agent_id": agent_id,
+            }
 
         payload = {
             "query": query,
@@ -274,6 +261,11 @@ class OrchestratorService:
                             "agent_id": agent_id,
                         }
                     else:
+                        # No result — mark agent as failed
+                        logger.warning(f"⚠️ Agent '{agent_id}' returned no result — marking as failed")
+                        if not hasattr(self, '_failed_agents'):
+                            self._failed_agents = set()
+                        self._failed_agents.add(agent_id)
                         return {
                             "success": False,
                             "error": "No result received",
@@ -282,6 +274,10 @@ class OrchestratorService:
 
         except Exception as e:
             logger.error(f"Agent execution error ({agent_id}): {e}")
+            # Mark agent as failed for retry
+            if not hasattr(self, '_failed_agents'):
+                self._failed_agents = set()
+            self._failed_agents.add(agent_id)
             return {
                 "success": False,
                 "error": str(e),
@@ -462,91 +458,180 @@ class OrchestratorService:
             **(context or {}),
         }
 
-        # WorkflowOrchestrator로 실행 (내부적으로 QueryPlanner가 LLM 분석 수행)
-        # 🆕 실행된 에이전트 결과 수집 (Knowledge Graph 시각화용)
-        executed_agents: List[Dict[str, Any]] = []
-        selected_agents_from_plan: List[Dict[str, Any]] = []
+        # Reset failed agents tracker
+        self._failed_agents = set()
 
+        # Retry loop: if agents fail, remove from registry and re-plan workflow
+        MAX_ATTEMPTS = 3
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            executed_agents: List[Dict[str, Any]] = []
+            selected_agents_from_plan: List[Dict[str, Any]] = []
+            workflow_succeeded = False
+            has_agent_failure = False
+
+            try:
+                async for event in self._orchestrator.run_streaming(
+                    query=query,
+                    context=execution_context,
+                ):
+                    converted = self._convert_orchestrator_event(event)
+
+                    # planning_complete 이벤트 강화
+                    if converted.get("event") == "planning_complete":
+                        converted = self._enhance_planning_complete(converted, agents)
+                        selected_agents_from_plan = converted.get("data", {}).get("selected_agents", [])
+                        try:
+                            from ontology.core.hybrid_agent_selector import get_hybrid_selector
+                            _sel = get_hybrid_selector()
+                            if hasattr(_sel, '_selection_history') and _sel._selection_history:
+                                _latest = _sel._selection_history[-1]
+                                yield {
+                                    "event": "ml_selection",
+                                    "data": {
+                                        "method": _latest.get("method", "unknown"),
+                                        "confidence": _latest.get("confidence", 0),
+                                        "selected_agent": _latest.get("selected_agent", ""),
+                                        "message": f"ML: {_latest.get('method', 'unknown')} (conf: {_latest.get('confidence', 0):.0%})",
+                                    },
+                                }
+                        except Exception:
+                            pass
+
+                    # agent_complete에서 실행 결과 수집
+                    if converted.get("event") == "agent_complete":
+                        agent_data = converted.get("data", {})
+                        aid = agent_data.get("agent_id", "")
+                        if aid:
+                            full_result = agent_data.get("data", {}).get("full_result", {})
+                            executed_agents.append({
+                                "agent_id": aid,
+                                "agent_name": agent_data.get("agent_name", aid),
+                                "result": full_result.get("data", {}).get("result", {}) if isinstance(full_result, dict) else full_result,
+                                "execution_time": agent_data.get("elapsed_time_ms", 0) / 1000 if agent_data.get("elapsed_time_ms") else 0,
+                                "confidence": 0.9,
+                            })
+
+                    # final_result 처리
+                    if converted.get("event") == "final_result":
+                        inner_data = converted.get("data", {}).get("data", {})
+                        result_content = inner_data.get("result", "")
+
+                        # Check if result indicates agent failure
+                        if isinstance(result_content, dict) and result_content.get("success") is False:
+                            has_agent_failure = True
+                        elif isinstance(result_content, str) and ("success': False" in result_content or "not running" in result_content):
+                            has_agent_failure = True
+
+                        if not has_agent_failure:
+                            # Inject collected agent results
+                            if not inner_data.get("agent_results") and executed_agents:
+                                inner_data["agent_results"] = executed_agents
+                            # KG visualization
+                            if executed_agents or selected_agents_from_plan:
+                                agents_for_kg = executed_agents if executed_agents else [
+                                    {"agent_id": a.get("agent_id"), "agent_name": a.get("agent_name"), "result": {}, "execution_time": 0, "confidence": 0.9}
+                                    for a in selected_agents_from_plan
+                                ]
+                                inner_data["knowledge_graph_visualization"] = self._create_kg_visualization_from_workflow(
+                                    query=query,
+                                    agent_results=agents_for_kg,
+                                    workflow_id=inner_data.get("metadata", {}).get("workflow_id", ""),
+                                )
+                            workflow_succeeded = True
+
+                    yield converted
+
+            except Exception as e:
+                logger.error(f"Orchestrator attempt {attempt} failed: {e}")
+                has_agent_failure = True
+
+            # Success — done
+            if workflow_succeeded and not has_agent_failure:
+                break
+
+            # Failed agents exist and retries remain — remove and re-plan
+            if self._failed_agents and attempt < MAX_ATTEMPTS:
+                failed_list = list(self._failed_agents)
+                logger.warning(
+                    f"🔄 Attempt {attempt}/{MAX_ATTEMPTS}: Failed agents: {failed_list}. "
+                    f"Removing from registry and re-planning..."
+                )
+
+                # Remove failed agents from registry
+                if self._registry and _orchestrator_available:
+                    for fid in failed_list:
+                        try:
+                            self._registry.unregister_agent(fid)
+                        except Exception:
+                            pass
+                # Remove from live set
+                self._live_agent_ids -= self._failed_agents
+                agents = [a for a in agents if a.get("agent_id", a.get("name", "")) not in self._failed_agents]
+
+                yield {
+                    "event": "log",
+                    "data": {
+                        "level": "warning",
+                        "message": f"🔄 Re-planning with {len(agents)} agents (removed: {', '.join(failed_list)})",
+                    },
+                }
+                self._failed_agents.clear()
+                continue
+
+            # All retries exhausted — generate graceful LLM error response
+            if not workflow_succeeded:
+                async for evt in self._generate_graceful_failure_response(query, agents):
+                    yield evt
+
+    async def _generate_graceful_failure_response(
+        self, query: str, remaining_agents: List[Dict[str, Any]]
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Generate a polished LLM response when all workflow attempts fail."""
+        agent_names = [a.get("name", a.get("agent_id", "")) for a in remaining_agents]
+        logger.warning(f"⚠️ All retry attempts failed for query: {query[:50]}...")
+
+        # Try to generate a helpful response using LLM directly
+        error_answer = None
         try:
-            async for event in self._orchestrator.run_streaming(
-                query=query,
-                context=execution_context,
-            ):
-                # ProgressEvent를 SSE 형식으로 변환
-                converted = self._convert_orchestrator_event(event)
+            from logosai.utils.llm_client import LLMClient
+            import os
+            google_key = os.getenv("GOOGLE_API_KEY", "")
+            if google_key:
+                llm = LLMClient(provider="google", model="gemini-2.5-flash-lite", temperature=0.7, max_tokens=2048)
+                await llm.initialize()
+                messages = [
+                    {"role": "system", "content": (
+                        "You are LogosAI assistant. The specialized agent for the user's query "
+                        "is currently unavailable. Answer the query to the best of your ability "
+                        "using your general knowledge. Be honest if you cannot provide real-time data. "
+                        "Respond in the same language as the user's query."
+                    )},
+                    {"role": "user", "content": query},
+                ]
+                error_answer = await asyncio.wait_for(llm.invoke_messages(messages), timeout=15)
+                if not isinstance(error_answer, str):
+                    error_answer = str(error_answer)
+        except Exception as llm_err:
+            logger.debug(f"Graceful LLM fallback failed: {llm_err}")
 
-                # 🆕 planning_complete 이벤트 강화 (선택된 에이전트 상세 정보 추가)
-                if converted.get("event") == "planning_complete":
-                    converted = self._enhance_planning_complete(converted, agents)
-                    # 🆕 선택된 에이전트 정보 저장 (KG 시각화용)
-                    selected_agents_from_plan = converted.get("data", {}).get("selected_agents", [])
+        if not error_answer:
+            error_answer = (
+                f"죄송합니다. 요청하신 작업을 처리할 수 있는 전문 에이전트가 현재 사용 불가 상태입니다.\n\n"
+                f"현재 사용 가능한 에이전트: {', '.join(agent_names) if agent_names else '없음'}\n\n"
+                f"잠시 후 다시 시도해 주세요."
+            )
 
-                    # v3.0: Emit ML selection metadata for dashboard
-                    try:
-                        from ontology.core.hybrid_agent_selector import get_hybrid_selector
-                        _sel = get_hybrid_selector()
-                        if hasattr(_sel, '_selection_history') and _sel._selection_history:
-                            _latest = _sel._selection_history[-1]
-                            yield {
-                                "event": "ml_selection",
-                                "data": {
-                                    "method": _latest.get("method", "unknown"),
-                                    "confidence": _latest.get("confidence", 0),
-                                    "value_estimate": _latest.get("value_estimate", 0),
-                                    "elapsed_ms": _latest.get("elapsed_ms", 0),
-                                    "selected_agent": _latest.get("selected_agent", ""),
-                                    "gnn_rl_enabled": _sel._gnn_rl_enabled,
-                                    "total_selections": _sel.stats.get("total_selections", 0),
-                                    "message": f"ML: {_latest.get('method', 'unknown')} (conf: {_latest.get('confidence', 0):.0%})",
-                                },
-                            }
-                    except Exception:
-                        pass  # Non-critical, skip silently
-
-                # 🆕 agent_complete 이벤트에서 실행 결과 수집
-                if converted.get("event") == "agent_complete":
-                    agent_data = converted.get("data", {})
-                    agent_id = agent_data.get("agent_id", "")
-                    if agent_id:
-                        full_result = agent_data.get("data", {}).get("full_result", {})
-                        executed_agents.append({
-                            "agent_id": agent_id,
-                            "agent_name": agent_data.get("agent_name", agent_id),
-                            "result": full_result.get("data", {}).get("result", {}) if isinstance(full_result, dict) else full_result,
-                            "execution_time": agent_data.get("elapsed_time_ms", 0) / 1000 if agent_data.get("elapsed_time_ms") else 0,
-                            "confidence": 0.9,
-                        })
-
-                # 🆕 workflow_complete 이벤트에 수집된 에이전트 정보 주입
-                if converted.get("event") == "final_result":
-                    # agent_results가 비어있으면 수집된 데이터로 대체
-                    inner_data = converted.get("data", {}).get("data", {})
-                    if not inner_data.get("agent_results") and executed_agents:
-                        inner_data["agent_results"] = executed_agents
-                    # 🆕 KG 시각화 데이터 재생성 (실제 에이전트 기반)
-                    if executed_agents or selected_agents_from_plan:
-                        agents_for_kg = executed_agents if executed_agents else [
-                            {"agent_id": a.get("agent_id"), "agent_name": a.get("agent_name"), "result": {}, "execution_time": 0, "confidence": 0.9}
-                            for a in selected_agents_from_plan
-                        ]
-                        inner_data["knowledge_graph_visualization"] = self._create_kg_visualization_from_workflow(
-                            query=query,
-                            agent_results=agents_for_kg,
-                            workflow_id=inner_data.get("metadata", {}).get("workflow_id", ""),
-                        )
-                        logger.info(f"📊 Re-generated KG visualization with {len(agents_for_kg)} actual agents")
-
-                yield converted
-
-        except Exception as e:
-            logger.error(f"Orchestrator execution failed: {e}")
-            yield {
-                "event": "error",
+        yield {
+            "event": "final_result",
+            "data": {
+                "code": 0,
                 "data": {
-                    "error_code": "EXECUTION_FAILED",
-                    "message": f"워크플로우 실행 실패: {str(e)}",
+                    "result": error_answer,
+                    "agent_results": [],
+                    "metadata": {"fallback": True, "reason": "agent_unavailable"},
                 },
-            }
+            },
+        }
 
     def _convert_orchestrator_event(self, event: Any) -> Dict[str, Any]:
         """Orchestrator 이벤트를 SSE 형식으로 변환."""
