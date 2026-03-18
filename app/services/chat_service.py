@@ -158,10 +158,10 @@ class ChatService:
                     content = msg.content[:500] if msg.content else ""
                     history_lines.append(f"{role}: {content}")
                 if history_lines:
-                    enriched_context["conversation_history"] = "\n".join(history_lines[-10:])  # Last 10 messages
-                    logger.info(f"Loaded {len(history_lines)} messages as conversation history")
+                    enriched_context["conversation_history"] = "\n".join(history_lines[-10:])
+                    logger.info(f"💬 Loaded {len(history_lines)} messages as conversation history")
         except Exception as e:
-            logger.debug(f"Conversation history loading skipped: {e}")
+            logger.warning(f"Conversation history loading failed: {e}")
 
         # Load user memories for context injection
         try:
