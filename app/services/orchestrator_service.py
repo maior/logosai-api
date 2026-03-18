@@ -173,18 +173,30 @@ class OrchestratorService:
         import aiohttp
         import json
 
-        # Check if agent is in the live set
+        # Check if agent is in the live set — try fuzzy matching if not found
         live_ids = getattr(self, '_live_agent_ids', set())
         if live_ids and agent_id not in live_ids:
-            logger.warning(f"⚠️ Agent '{agent_id}' not in live ACP agents — marking as failed")
-            if not hasattr(self, '_failed_agents'):
-                self._failed_agents = set()
-            self._failed_agents.add(agent_id)
-            return {
-                "success": False,
-                "error": f"Agent '{agent_id}' is not running on ACP server",
-                "agent_id": agent_id,
-            }
+            # Try fuzzy match: internet_agent → internet_search_agent, etc.
+            matched = None
+            agent_words = set(agent_id.replace('_agent', '').split('_'))
+            for lid in live_ids:
+                lid_words = set(lid.replace('_agent', '').split('_'))
+                if agent_words & lid_words:  # Any common words
+                    matched = lid
+                    break
+            if matched:
+                logger.info(f"🔄 Agent '{agent_id}' → '{matched}' (fuzzy match)")
+                agent_id = matched
+            else:
+                logger.warning(f"⚠️ Agent '{agent_id}' not in live ACP agents — marking as failed")
+                if not hasattr(self, '_failed_agents'):
+                    self._failed_agents = set()
+                self._failed_agents.add(agent_id)
+                return {
+                    "success": False,
+                    "error": f"Agent '{agent_id}' is not running on ACP server",
+                    "agent_id": agent_id,
+                }
 
         payload = {
             "query": query,
@@ -538,6 +550,11 @@ class OrchestratorService:
                                     workflow_id=inner_data.get("metadata", {}).get("workflow_id", ""),
                                 )
                             workflow_succeeded = True
+
+                    # Don't send failed final_result to frontend if we're going to retry
+                    if converted.get("event") == "final_result" and has_agent_failure and attempt < MAX_ATTEMPTS:
+                        logger.info(f"🔄 Suppressing failed final_result (attempt {attempt}, will retry)")
+                        continue
 
                     yield converted
 
