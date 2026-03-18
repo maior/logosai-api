@@ -169,9 +169,35 @@ class OrchestratorService:
         ACP 서버를 통해 에이전트를 실행합니다.
 
         WorkflowOrchestrator의 ExecutionEngine이 이 함수를 호출합니다.
+        에이전트가 ACP에 없으면 llm_chat_agent로 fallback합니다.
         """
         import aiohttp
         import json
+
+        # Check if agent is actually running on ACP
+        live_ids = getattr(self, '_live_agent_ids', set())
+        if live_ids and agent_id not in live_ids:
+            # Try to find a similar agent in live set
+            fallback_id = None
+            for lid in live_ids:
+                if agent_id.split('_')[0] in lid:
+                    fallback_id = lid
+                    break
+            if not fallback_id:
+                fallback_id = "llm_chat_agent" if "llm_chat_agent" in live_ids else next(iter(live_ids), None)
+
+            if fallback_id:
+                logger.warning(
+                    f"⚠️ Agent '{agent_id}' not running on ACP. "
+                    f"Falling back to '{fallback_id}'"
+                )
+                agent_id = fallback_id
+            else:
+                return {
+                    "success": False,
+                    "error": f"Agent '{agent_id}' not available and no fallback found",
+                    "agent_id": agent_id,
+                }
 
         payload = {
             "query": query,
@@ -263,15 +289,14 @@ class OrchestratorService:
             }
 
     async def load_agents_from_acp(self) -> List[Dict[str, Any]]:
-        """ACP 서버에서 사용 가능한 에이전트 목록을 로드합니다.
+        """ACP 서버에서 실제 가동 중인 에이전트 목록을 로드합니다.
 
-        ACP에서 받은 에이전트를 DB에 저장하고 ontology registry에도 등록합니다.
+        중요: DB에 등록된 에이전트가 아닌, ACP에서 실제 실행 중인 에이전트만 사용합니다.
+        DB에 47개가 있어도 ACP에 7개만 가동 중이면 7개만 반환합니다.
         """
         import aiohttp
-        import json
 
         try:
-            # ACP 서버는 JSON-RPC 형식 사용
             rpc_payload = {
                 "jsonrpc": "2.0",
                 "method": "list_agents",
@@ -287,32 +312,26 @@ class OrchestratorService:
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
-                        # JSON-RPC 응답에서 result 추출
                         result = data.get("result", data)
                         agents = result.get("agents", [])
 
-                        # DB에 에이전트 동기화 저장
-                        try:
-                            from app.database import get_db_context
-                            from app.services.agent_registry_service import AgentRegistryService
+                        # Store the set of live agent IDs for filtering
+                        live_agent_ids = {
+                            a.get("agent_id", a.get("name", "")).lower().replace(" ", "_")
+                            for a in agents
+                        }
+                        self._live_agent_ids = live_agent_ids
 
-                            async with get_db_context() as db:
-                                service = AgentRegistryService(db)
-                                sync_result = await service.sync_from_acp()
-                                logger.info(
-                                    f"📦 DB sync: +{sync_result['added']}, "
-                                    f"~{sync_result['updated']}, total={sync_result['total']}"
-                                )
-                                # DB에서 다시 로드하여 ontology registry 업데이트
-                                if self._registry and _orchestrator_available:
-                                    await service.load_into_ontology_registry(self._registry)
-                        except Exception as db_err:
-                            logger.debug(f"DB sync skipped: {db_err}")
-                            # Fallback: 직접 registry에 등록
-                            if self._registry and _orchestrator_available:
-                                self._register_agents_to_registry(agents)
+                        # Register ONLY live agents to ontology registry
+                        # (not DB agents — DB may have agents that aren't running)
+                        if self._registry and _orchestrator_available:
+                            self._register_agents_to_registry(agents)
+                            logger.info(
+                                f"📦 Registry: {len(agents)} live agents from ACP "
+                                f"(DB may have more, but only live agents are used)"
+                            )
 
-                        logger.info(f"📦 Loaded {len(agents)} agents from ACP server")
+                        logger.info(f"📦 Loaded {len(agents)} live agents from ACP server")
                         return agents
                     else:
                         logger.warning(f"Failed to load agents: HTTP {response.status}")
