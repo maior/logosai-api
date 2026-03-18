@@ -13,7 +13,7 @@ from app.services.acp_client import close_acp_client
 from app.services.orchestrator_service import close_orchestrator_service
 
 # Import routers (core)
-from app.routers import auth, users, projects, sessions, chat, health, marketplace, agents, memory, ml_dashboard, monitoring
+from app.routers import auth, users, projects, sessions, chat, health, marketplace, agents, memory, ml_dashboard, monitoring, telegram
 
 # Import RAG routers (optional — requires pip install logos-api[rag])
 try:
@@ -113,6 +113,7 @@ app.include_router(agents.router, prefix="/api/v1/agents", tags=["Agents"])
 app.include_router(memory.router, prefix="/api/v1/memories", tags=["Memories"])
 app.include_router(ml_dashboard.router, prefix="/api/v1/ml", tags=["ML Dashboard"])
 app.include_router(monitoring.router, prefix="/api/v1", tags=["Monitoring"])
+app.include_router(telegram.router, prefix="/api/v1", tags=["Telegram"])
 
 
 @app.get("/")

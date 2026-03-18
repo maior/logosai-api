@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # Internet Search
     tavily_api_key: str = ""
 
+    # Telegram Bot
+    telegram_bot_token: str = ""  # From @BotFather
+    telegram_webhook_secret: str = ""  # Optional webhook verification
+
     # Auth Mode
     auth_mode: str = "team"  # "personal" or "team"
     personal_user_email: str = ""  # email for personal mode
