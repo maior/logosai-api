@@ -142,8 +142,28 @@ class ChatService:
         )
         await self.db.commit()
 
-        # Load user memories for context injection
+        # Load conversation history for context continuity
         enriched_context = {**(request.context or {})}
+        try:
+            conv_service = ConversationService(self.db)
+            recent_messages, _ = await conv_service.get_messages(
+                conversation_id=conversation.id,
+                skip=0,
+                limit=20,  # Last 20 messages (10 turns)
+            )
+            if len(recent_messages) > 1:  # More than just the current user message
+                history_lines = []
+                for msg in recent_messages[:-1]:  # Exclude the just-saved user message
+                    role = "User" if msg.role == "user" else "Assistant"
+                    content = msg.content[:500] if msg.content else ""
+                    history_lines.append(f"{role}: {content}")
+                if history_lines:
+                    enriched_context["conversation_history"] = "\n".join(history_lines[-10:])  # Last 10 messages
+                    logger.info(f"Loaded {len(history_lines)} messages as conversation history")
+        except Exception as e:
+            logger.debug(f"Conversation history loading skipped: {e}")
+
+        # Load user memories for context injection
         try:
             from app.services.memory_service import MemoryService
             memory_service = MemoryService(self.db)
