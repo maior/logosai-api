@@ -33,28 +33,65 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}"
 # Telegram API helpers
 # ═══════════════════════════════════════
 
+def _clean_for_telegram(text: str) -> str:
+    """Strip HTML/CSS/JS but keep Telegram-compatible Markdown."""
+    import re
+
+    # Remove entire <style>...</style> blocks
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Remove entire <script>...</script> blocks
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    # Remove CSS @import statements
+    text = re.sub(r'@import\s+url\([^)]+\);?', '', text)
+    # Remove inline CSS (style="...")
+    text = re.sub(r'\s*style="[^"]*"', '', text)
+    # Remove CSS class attributes
+    text = re.sub(r'\s*class="[^"]*"', '', text)
+    # Remove all HTML tags but keep inner text
+    text = re.sub(r'<[^>]+>', '', text)
+    # Remove CSS property-like lines
+    text = re.sub(r'^\s*[\w-]+\s*:\s*[^;]+;\s*$', '', text, flags=re.MULTILINE)
+    # Remove CSS selectors and braces
+    text = re.sub(r'^\s*[.#][\w-]+\s*\{.*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\}\s*$', '', text, flags=re.MULTILINE)
+    # Remove markdown images (not supported in Telegram)
+    text = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', r'\2', text)
+    # Convert ### headers to bold (Telegram doesn't support #)
+    text = re.sub(r'^#{1,6}\s+(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # Remove horizontal rules
+    text = re.sub(r'^---+$', '', text, flags=re.MULTILINE)
+    # Clean up multiple blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    # Remove leading/trailing whitespace per line
+    text = '\n'.join(line.strip() for line in text.split('\n'))
+    text = re.sub(r'^\n+|\n+$', '', text)
+    return text.strip()
+
+
 async def send_telegram_message(
     chat_id: int,
     text: str,
-    parse_mode: str = "Markdown",
     reply_to_message_id: Optional[int] = None,
 ):
-    """Send a message to Telegram chat."""
+    """Send a clean text message to Telegram chat."""
     if not settings.telegram_bot_token:
         logger.warning("Telegram bot token not configured")
         return
 
     url = f"{TELEGRAM_API.format(token=settings.telegram_bot_token)}/sendMessage"
 
+    # Clean text for Telegram (remove HTML/markdown artifacts)
+    clean_text = _clean_for_telegram(text)
+
     # Telegram has 4096 char limit — split if needed
-    chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+    chunks = [clean_text[i:i+4000] for i in range(0, len(clean_text), 4000)]
 
     async with httpx.AsyncClient(timeout=30) as client:
         for i, chunk in enumerate(chunks):
             payload = {
                 "chat_id": chat_id,
                 "text": chunk,
-                "parse_mode": parse_mode,
+                "parse_mode": "Markdown",
             }
             if reply_to_message_id and i == 0:
                 payload["reply_to_message_id"] = reply_to_message_id
@@ -62,8 +99,8 @@ async def send_telegram_message(
             try:
                 resp = await client.post(url, json=payload)
                 if resp.status_code != 200:
-                    # Retry without parse_mode (markdown may be invalid)
-                    payload["parse_mode"] = None
+                    # Markdown parsing failed — retry without parse_mode
+                    payload.pop("parse_mode", None)
                     await client.post(url, json=payload)
             except Exception as e:
                 logger.error(f"Failed to send Telegram message: {e}")
@@ -83,23 +120,104 @@ async def send_typing_action(chat_id: int):
 # Chat processing
 # ═══════════════════════════════════════
 
+async def _format_for_telegram(query: str, raw_answer: str) -> str:
+    """Use LLM to reformat agent response for Telegram's chat format.
+
+    Converts long markdown/HTML responses into concise, mobile-friendly text.
+    NEVER fabricates data — only reformats what exists.
+    """
+    if not raw_answer or len(raw_answer) < 20:
+        return raw_answer
+
+    try:
+        from logosai.utils.llm_client import LLMClient
+        import os
+
+        google_key = os.getenv("GOOGLE_API_KEY", "")
+        if not google_key:
+            return _clean_for_telegram(raw_answer)
+
+        llm = LLMClient(provider="google", model="gemini-2.5-flash-lite", temperature=0.3, max_tokens=1000)
+        await llm.initialize()
+
+        messages = [
+            {"role": "system", "content": """You are a Telegram message formatter. Convert AI responses into clean, beautiful Telegram messages.
+
+YOUR JOB:
+1. Extract the KEY INFORMATION from the AI response
+2. Format using Telegram Markdown:
+   - *bold* for emphasis and headers
+   - _italic_ for notes
+   - `code` for values, numbers, filenames
+   - [link text](url) for links
+3. Use emoji for visual structure (📊 💰 📅 ✅ ⚠️ 💡 🔍 📁 📄 etc.)
+4. Each key point on its own line
+5. Same language as the original
+6. Remove ALL HTML tags, CSS, JavaScript — only Telegram Markdown
+
+ABSOLUTE PROHIBITION:
+- NEVER INVENT or ADD information not in the original
+- NEVER create fake data
+- If the original has no useful content, say "정보를 찾을 수 없습니다"
+
+Keep it concise and beautiful for mobile chat."""},
+            {"role": "user", "content": f"User question: {query}\n\nAI response (extract key info, NEVER add new info):\n{_clean_for_telegram(raw_answer)[:3000]}"},
+        ]
+
+        result = await asyncio.wait_for(llm.invoke_messages(messages), timeout=10)
+        formatted = result.strip() if isinstance(result, str) else str(result).strip()
+
+        print(f"[TG_FORMAT] Input: {len(raw_answer)} chars → Output: {len(formatted)} chars")
+        print(f"[TG_FORMAT] Preview: {formatted[:200]}")
+
+        if formatted and len(formatted) > 20:
+            if len(formatted) > len(raw_answer) * 2:
+                print("[TG_FORMAT] BLOCKED — output too long, using original")
+                return _clean_for_telegram(raw_answer)
+            return _clean_for_telegram(formatted)
+
+    except Exception as e:
+        print(f"[TG_FORMAT] LLM failed: {e}")
+
+    # Fallback to basic cleanup
+    return _clean_for_telegram(raw_answer)
+
+
 async def process_telegram_message(chat_id: int, user_id: str, text: str, message_id: int):
     """Process a Telegram message through LogosAI pipeline."""
     from app.database import get_db_context
     from app.services.chat_service import ChatService
-    from app.services.orchestrator_service import get_orchestrator_service
+    from app.services.user_service import UserService
     from app.schemas.chat import ChatRequest
 
-    # Show typing indicator
-    await send_typing_action(chat_id)
+    # Start periodic typing indicator (every 4 seconds)
+    typing_flag = [True]  # Use list for mutable closure
+
+    async def keep_typing():
+        while typing_flag[0]:
+            try:
+                await send_typing_action(chat_id)
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    typing_task = asyncio.create_task(keep_typing())
 
     try:
         async with get_db_context() as db:
-            orchestrator = await get_orchestrator_service()
-            chat_service = ChatService(db, orchestrator_service=orchestrator)
+            chat_service = ChatService(db)
 
-            # Use telegram user_id as email (for user identification)
-            telegram_email = f"telegram_{user_id}@logosai.local"
+            # Get or create user from telegram ID
+            telegram_email = f"telegram_{user_id}@logosai.info"
+            user_service = UserService(db)
+            user = await user_service.get_by_email(telegram_email)
+            if not user:
+                from app.schemas.user import UserCreate
+                user = await user_service.create(UserCreate(
+                    email=telegram_email,
+                    name=f"Telegram User {user_id}",
+                ))
+                await db.commit()
 
             request = ChatRequest(
                 query=text,
@@ -110,15 +228,11 @@ async def process_telegram_message(chat_id: int, user_id: str, text: str, messag
             # Stream and collect final result
             final_answer = ""
             async for event in chat_service.stream_chat(
-                user_id=telegram_email,
+                user_id=user.id,
                 request=request,
                 user_email=telegram_email,
             ):
                 event_type = event.get("event", "")
-
-                # Send typing indicator periodically
-                if event_type in ("agent_started", "planning_complete"):
-                    await send_typing_action(chat_id)
 
                 # Capture final result
                 if event_type == "final_result":
@@ -126,8 +240,25 @@ async def process_telegram_message(chat_id: int, user_id: str, text: str, messag
                     inner = data.get("data", data)
                     final_answer = inner.get("result", "")
 
+            # Stop typing
+            typing_flag[0] = False
+            typing_task.cancel()
+
             if final_answer:
-                await send_telegram_message(chat_id, final_answer, reply_to_message_id=message_id)
+                # Check if the answer is actually an error message
+                error_indicators = ["오류가 발생했습니다", "Error:", "Traceback", "Exception", "에이전트가 현재 사용 불가"]
+                is_error = any(ind in final_answer for ind in error_indicators)
+
+                if is_error:
+                    await send_telegram_message(
+                        chat_id,
+                        "⚠️ 요청을 처리하는 중 문제가 발생했습니다. 다시 시도해주세요.",
+                        reply_to_message_id=message_id,
+                    )
+                else:
+                    # Reformat for Telegram's chat format
+                    formatted = await _format_for_telegram(text, final_answer)
+                    await send_telegram_message(chat_id, formatted, reply_to_message_id=message_id)
             else:
                 await send_telegram_message(
                     chat_id,
@@ -136,6 +267,8 @@ async def process_telegram_message(chat_id: int, user_id: str, text: str, messag
                 )
 
     except Exception as e:
+        typing_flag[0] = False
+        typing_task.cancel()
         logger.error(f"Telegram processing error: {e}")
         await send_telegram_message(
             chat_id,
@@ -177,7 +310,7 @@ async def telegram_webhook(request: Request):
         await send_telegram_message(
             chat_id,
             f"안녕하세요 {user_name}님! 👋\n\n"
-            f"저는 **LogosAI** 챗봇입니다.\n"
+            f"저는 LogosAI 챗봇입니다.\n"
             f"무엇이든 물어보세요. 인터넷 검색, 번역, 코드 생성, 요약 등 다양한 에이전트가 도와드립니다.\n\n"
             f"예시:\n"
             f"- 테슬라 주식 어때?\n"
@@ -191,9 +324,9 @@ async def telegram_webhook(request: Request):
     if text == "/help":
         await send_telegram_message(
             chat_id,
-            "**LogosAI 사용법** 🤖\n\n"
+            "LogosAI 사용법 🤖\n\n"
             "자유롭게 질문하면 최적의 에이전트가 자동 선택됩니다.\n\n"
-            "**사용 가능한 기능:**\n"
+            "사용 가능한 기능:\n"
             "- 💬 일반 대화 / Q&A\n"
             "- 🔍 인터넷 검색\n"
             "- 🌐 번역 (10개 언어)\n"
@@ -201,7 +334,7 @@ async def telegram_webhook(request: Request):
             "- 📝 요약\n"
             "- ✍️ 문서 작성\n"
             "- 🧮 계산\n\n"
-            "**명령어:**\n"
+            "명령어:\n"
             "/start - 시작\n"
             "/help - 도움말",
         )
