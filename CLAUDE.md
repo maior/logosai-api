@@ -610,6 +610,43 @@ sys.path.insert(0, '/path/to/Logos')
 sys.path.insert(0, '/path/to/Logos/ontology')
 ```
 
+## Telegram Bot Integration
+
+logos_api에 텔레그램 봇 웹훅이 내장되어 있음. 동일한 채팅 파이프라인(orchestrator + agents) 사용.
+
+### 설정
+```bash
+# .env에 추가
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+```
+
+### 로컬 개발 (Polling 모드)
+```bash
+# ⚠️ 반드시 logos_api/ 디렉토리에서 실행
+cd logos_api
+python scripts/telegram_poll.py
+```
+
+### 주요 파일
+| 파일 | 설명 |
+|------|------|
+| `app/routers/telegram.py` | 웹훅 엔드포인트 + 메시지 처리 |
+| `scripts/telegram_poll.py` | 로컬 개발용 polling 스크립트 |
+
+### 텔레그램 메시지 처리 흐름
+```
+Telegram → telegram_poll.py → /api/v1/telegram/webhook
+    → process_telegram_message() → ChatService.stream_chat()
+    → _format_for_telegram() (LLM으로 모바일 최적화)
+    → send_telegram_message() → Telegram
+```
+
+### 주의사항
+- `_format_for_telegram`: LLM이 원본 데이터를 변형하지 않도록 프롬프트에 "NEVER INVENT" 규칙 적용
+- `_clean_for_telegram`: HTML/CSS/JS 태그 제거 후 LLM에 전달 (토큰 절약)
+- 에러 응답 감지: agent 에러를 사용자 친화적 메시지로 변환
+- typing indicator: 4초마다 반복 전송 (텔레그램 5초 만료)
+
 ## Related Documentation
 
 - [README.md](./README.md) - Project introduction and API documentation
