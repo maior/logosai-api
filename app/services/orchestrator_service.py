@@ -159,6 +159,66 @@ class OrchestratorService:
             logger.warning(f"⚠️ DB agent loading failed, using DEFAULT_AGENTS: {e}")
             return 0
 
+    async def _direct_agent_stream(
+        self,
+        agent_id: str,
+        query: str,
+        user_email: str,
+        session_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Direct agent call — bypasses QueryPlanner/WorkflowOrchestrator.
+
+        Used for desktop_agent and other agents that should receive
+        the original query without expansion or transformation.
+        """
+        yield {"event": "initialization", "data": {"message": "Connecting to agent...", "stage": "initializing"}}
+        yield {"event": "agent_started", "data": {"agent_id": agent_id, "query": query}}
+
+        try:
+            result = await self._execute_agent_via_acp(
+                agent_id=agent_id,
+                query=query,
+                context={
+                    "email": user_email,
+                    "session_id": session_id or "",
+                    "original_query": query,
+                    **(context or {}),
+                },
+            )
+
+            answer = ""
+            if isinstance(result, dict):
+                content = result.get("content", result)
+                if isinstance(content, dict):
+                    answer = content.get("answer", content.get("result", str(content)))
+                else:
+                    answer = str(content)
+            else:
+                answer = str(result)
+
+            yield {
+                "event": "final_result",
+                "data": {
+                    "code": 0,
+                    "data": {
+                        "result": answer,
+                        "agent_results": [{
+                            "agent_id": agent_id,
+                            "agent_name": agent_id,
+                            "result": {"answer": answer},
+                        }],
+                    },
+                },
+            }
+        except Exception as e:
+            logger.error(f"Direct agent stream error: {e}")
+            yield {
+                "event": "error",
+                "data": {"message": f"Agent error: {e}", "error_code": "AGENT_ERROR"},
+            }
+
     async def _execute_agent_via_acp(
         self,
         agent_id: str,
@@ -390,6 +450,24 @@ class OrchestratorService:
         - DataTransformer로 에이전트 간 데이터 변환
         - SSE 이벤트 스트리밍
         """
+        # ── Desktop Agent 사전 라우팅 (QueryPlanner 우회) ──
+        # 이메일/카카오톡/데스크톱 관련 쿼리는 query expansion 없이 직접 desktop_agent로
+        _q = query.lower()
+        _desktop_keywords = [
+            "메일", "이메일", "email", "gmail", "inbox",
+            "카카오톡", "카톡", "kakaotalk",
+            "스크린샷", "screenshot",
+            "자동 리포트", "auto report",
+            "데스크톱", "desktop",
+        ]
+        if any(kw in _q for kw in _desktop_keywords):
+            logger.info(f"🖥️ Desktop direct routing: '{query[:50]}'")
+            async for event in self._direct_agent_stream(
+                "desktop_agent", query, user_email, session_id, project_id, context
+            ):
+                yield event
+            return
+
         # 초기화 확인
         if not await self.initialize():
             async for event in self._fallback_stream(query, user_email, session_id, project_id, context):

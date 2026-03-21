@@ -34,6 +34,16 @@ class ConversationService:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_title(self, user_id: str, title: str) -> Optional[Conversation]:
+        """Get conversation by user ID and title (for persistent sessions like Telegram)."""
+        result = await self.db.execute(
+            select(Conversation).where(
+                Conversation.user_id == user_id,
+                Conversation.title == title,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_by_id_and_user(
         self,
         conversation_id: str,

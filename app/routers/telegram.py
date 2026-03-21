@@ -219,9 +219,21 @@ async def process_telegram_message(chat_id: int, user_id: str, text: str, messag
                 ))
                 await db.commit()
 
+            # Use telegram chat_id as persistent session — maintains conversation history
+            from app.services.conversation_service import ConversationService
+            from app.schemas.session import SessionCreate
+            conv_service = ConversationService(db)
+            telegram_session_id = f"telegram_{chat_id}"
+
+            # Find or create telegram session
+            existing = await conv_service.get_by_title(user.id, telegram_session_id)
+            if not existing:
+                existing = await conv_service.create(user.id, SessionCreate(title=telegram_session_id))
+                await db.commit()
+
             request = ChatRequest(
                 query=text,
-                session_id=None,  # Auto-create/find session
+                session_id=str(existing.id),
                 project_id=None,
             )
 
