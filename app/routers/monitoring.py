@@ -20,30 +20,40 @@ _start_time = time.time()
 async def service_status():
     """Check status of all LogosAI services."""
 
-    async def check_service(name: str, url: str, timeout: float = 3.0):
+    async def check_service(name: str, url: str, timeout: float = 3.0, method: str = "GET", json_body: dict | None = None):
         try:
+            start_t = time.time()
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-                    return {
-                        "name": name,
-                        "url": url,
-                        "status": "running" if resp.status < 500 else "error",
-                        "http_code": resp.status,
-                        "response_time_ms": round((time.time() - start) * 1000),
-                    }
+                if method == "POST" and json_body:
+                    async with session.post(url, json=json_body, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                        return {
+                            "name": name, "url": url,
+                            "status": "running" if resp.status < 400 else "error",
+                            "http_code": resp.status,
+                            "response_time_ms": round((time.time() - start_t) * 1000),
+                        }
+                else:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                        return {
+                            "name": name, "url": url,
+                            "status": "running" if resp.status < 400 else "error",
+                            "http_code": resp.status,
+                            "response_time_ms": round((time.time() - start_t) * 1000),
+                        }
         except Exception as e:
             return {
-                "name": name,
-                "url": url,
-                "status": "stopped",
-                "http_code": 0,
+                "name": name, "url": url,
+                "status": "stopped", "http_code": 0,
                 "error": str(e),
             }
 
     start = time.time()
     services = await asyncio.gather(
         check_service("logos_api", f"http://localhost:{settings.port}/health"),
-        check_service("ACP Server", f"{settings.acp_server_url}/jsonrpc"),
+        check_service("ACP Server", f"{settings.acp_server_url}/jsonrpc", method="POST",
+                       json_body={"jsonrpc": "2.0", "id": 1, "method": "get_server_info"}),
+        check_service("logos_web", "http://localhost:8010/api/health"),
+        check_service("FORGE", "http://localhost:8030/health"),
     )
 
     # Self status
@@ -64,21 +74,18 @@ async def get_recent_logs(lines: int = 50, service: str = "all"):
     """Get recent log lines."""
     import os
 
-    log_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    log_dir = os.path.join(os.path.dirname(log_dir), "logs")
-
-    result = {}
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     log_files = {
-        "acp": "acp.log",
-        "api": "api.log",
-        "web": "web.log",
+        "acp": os.path.join(project_root, "acp_server", "logs", "agent_server.log"),
+        "api": os.path.join(project_root, "logos_api", "logs", "logos_api.log"),
+        "web": os.path.join(project_root, "logos_web", "logs", "logos_web.log"),
     }
 
     if service != "all":
         log_files = {k: v for k, v in log_files.items() if k == service}
 
-    for svc, filename in log_files.items():
-        filepath = os.path.join(log_dir, filename)
+    result = {}
+    for svc, filepath in log_files.items():
         if os.path.exists(filepath):
             try:
                 with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
@@ -97,29 +104,38 @@ async def stream_logs():
     """Stream logs in real-time via SSE."""
     import os
 
-    log_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    log_dir = os.path.join(os.path.dirname(log_dir), "logs")
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    log_paths = {
+        "acp": os.path.join(project_root, "acp_server", "logs", "agent_server.log"),
+        "api": os.path.join(project_root, "logos_api", "logs", "logos_api.log"),
+        "web": os.path.join(project_root, "logos_web", "logs", "logos_web.log"),
+    }
 
     async def event_generator():
         import json
 
         files = {}
-        log_names = {"acp.log": "acp", "api.log": "api", "web.log": "web"}
-
-        # Open files and seek to end
-        for filename, svc in log_names.items():
-            filepath = os.path.join(log_dir, filename)
+        for svc, filepath in log_paths.items():
             if os.path.exists(filepath):
                 f = open(filepath, "r", encoding="utf-8", errors="ignore")
-                f.seek(0, 2)  # Seek to end
+                # Send last 30 lines as initial batch
+                all_lines = f.readlines()
+                for line in all_lines[-30:]:
+                    stripped = line.rstrip()
+                    if stripped:
+                        data = json.dumps({"service": svc, "line": stripped})
+                        yield f"data: {data}\n\n"
+                # Now at end of file, will tail new lines
                 files[svc] = f
 
         try:
             while True:
                 has_data = False
                 for svc, f in files.items():
-                    line = f.readline()
-                    if line:
+                    for _ in range(20):  # Read up to 20 lines per tick
+                        line = f.readline()
+                        if not line:
+                            break
                         has_data = True
                         data = json.dumps({"service": svc, "line": line.rstrip()})
                         yield f"data: {data}\n\n"
@@ -127,6 +143,8 @@ async def stream_logs():
                 if not has_data:
                     yield ": heartbeat\n\n"
                     await asyncio.sleep(1)
+                else:
+                    await asyncio.sleep(0.2)
         finally:
             for f in files.values():
                 f.close()

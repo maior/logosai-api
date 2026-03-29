@@ -456,6 +456,7 @@ class OrchestratorService:
         _desktop_keywords = [
             "메일", "이메일", "email", "gmail", "inbox",
             "카카오톡", "카톡", "kakaotalk",
+            "notion", "노션",
             "스크린샷", "screenshot",
             "자동 리포트", "auto report",
             "데스크톱", "desktop",
